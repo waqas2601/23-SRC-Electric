@@ -1,7 +1,6 @@
 import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
-import MobileNav from "./MobileNav";
 import { useState } from "react";
 
 function Layout() {
@@ -54,7 +53,6 @@ function Layout() {
             className="flex-1"
             style={{
               padding: "22px",
-              paddingBottom: "88px",
               overflowX: "hidden",
               width: "100%",
               boxSizing: "border-box",
@@ -62,8 +60,6 @@ function Layout() {
           >
             <Outlet />
           </main>
-
-          <MobileNav />
         </div>
       </div>
     </div>
