@@ -1,4 +1,5 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -6,6 +7,14 @@ interface SidebarProps {
 }
 
 function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+
   return (
     <aside
       className={`fixed top-0 left-0 bottom-0 z-[100] flex flex-col transition-transform duration-[280ms] ${
@@ -18,36 +27,15 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
       }}
       id="sidebar"
     >
-      {/* Brand */}
       <div
         className="flex items-center gap-3 p-[18px_18px_14px]"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <div
-          className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-          style={{
-            background: "linear-gradient(135deg,#2535c8,#e8141c)",
-            boxShadow: "0 0 18px rgba(232,20,28,.35)",
-          }}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-            <path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z" />
-          </svg>
-        </div>
-        <div>
-          <div
-            className="font-inter font-extrabold text-[13px]"
-            style={{ color: "var(--text-primary)" }}
-          >
-            SRC
-          </div>
-          <div
-            className="text-[9px] uppercase tracking-widest mt-[2px]"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            Switch &amp; Socket
-          </div>
-        </div>
+        <img
+          src="/logo.png"
+          alt="SRC Electric"
+          className="h-[36px] w-auto object-contain"
+        />
         <button
           onClick={onClose}
           className="ml-auto text-lg leading-none p-1 rounded-md md:hidden"
@@ -335,22 +323,46 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
               background: "linear-gradient(135deg,var(--electric),#e8141c)",
             }}
           >
-            SA
+            {user?.name?.charAt(0).toUpperCase() ?? "A"}
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <div
-              className="text-[12px] font-medium"
+              className="text-[12px] font-medium truncate"
               style={{ color: "var(--text-primary)" }}
             >
-              SRC Admin
+              {user?.name ?? "Admin"}
             </div>
             <div
               className="text-[10px]"
               style={{ color: "var(--text-secondary)" }}
             >
-              Administrator
+              {user?.role ?? "Administrator"}
             </div>
           </div>
+          <button
+            onClick={logout}
+            className="p-[5px] rounded-lg flex-shrink-0 transition-all"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+            }}
+            title="Logout"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
         </div>
       </div>
     </aside>

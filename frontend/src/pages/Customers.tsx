@@ -1,65 +1,92 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Badge from "../components/ui/Badge";
 import Avatar from "../components/ui/Avatar";
+import CustomerModal from "../components/ui/CustomerModal";
+import { useAuth } from "../context/AuthContext";
+import { getCustomersAPI, deleteCustomerAPI } from "../api/customers";
 
-const CUSTOMERS = [
-  {
-    initials: "AE",
-    gradient: "default",
-    name: "Ahmad Electronics",
-    address: "Main Bazaar, Gujrat",
-    phone: "0300-1234567",
-    invoices: 14,
-    balance: "PKR 18,500",
-    status: "overdue" as const,
-  },
-  {
-    initials: "ZT",
-    gradient: "cyan",
-    name: "Zahid Traders",
-    address: "Saddar, Gujrat",
-    phone: "0311-9876543",
-    invoices: 8,
-    balance: "PKR 8,200",
-    status: "partial" as const,
-  },
-  {
-    initials: "RS",
-    gradient: "green",
-    name: "Raza Stores",
-    address: "Civil Lines, Gujrat",
-    phone: "0333-4561234",
-    invoices: 21,
-    balance: "PKR 0",
-    status: "clear" as const,
-  },
-  {
-    initials: "MK",
-    gradient: "purple",
-    name: "M. Khan & Sons",
-    address: "Kharian Road",
-    phone: "0345-7778899",
-    invoices: 6,
-    balance: "PKR 5,000",
-    status: "partial" as const,
-  },
-];
+interface Customer {
+  _id: string;
+  name: string;
+  shop_name?: string;
+  address?: string;
+  phone?: string;
+  notes?: string;
+  is_active: boolean;
+  balance?: number;
+  status?: "paid" | "partial" | "unpaid" | "overdue" | "clear";
+}
 
-const balanceColor: Record<string, string> = {
-  overdue: "#ff4d6a",
-  partial: "#ffb020",
-  clear: "#00c97a",
-};
+function getInitials(name: string) {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+const GRADIENTS = ["default", "cyan", "green", "purple", "red"];
+
+function getGradient(index: number) {
+  return GRADIENTS[index % GRADIENTS.length];
+}
 
 function Customers() {
+  const { token } = useAuth();
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const filtered = CUSTOMERS.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.address.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone.includes(search),
-  );
+  const fetchCustomers = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const data = await getCustomersAPI(token!, {
+        q: search || undefined,
+        limit: 50,
+      });
+      console.log("Customers API:", data);
+      setCustomers(data.items ?? data.customers ?? data.data ?? []);
+    } catch (err: any) {
+      setError(err.message || "Failed to load customers");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, search]);
+
+  useEffect(() => {
+    fetchCustomers();
+  }, [fetchCustomers]);
+
+  const handleEdit = (customer: Customer) => {
+    setEditCustomer(customer);
+    setModalOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setDeleteLoading(true);
+    try {
+      await deleteCustomerAPI(token!, deleteId);
+      setDeleteId(null);
+      fetchCustomers();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete customer");
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleModalClose = () => {
+    setModalOpen(false);
+    setEditCustomer(null);
+  };
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
@@ -71,7 +98,13 @@ function Customers() {
         >
           Customers <span style={{ color: "var(--electric)" }}>Directory</span>
         </div>
-        <button className="btn btn-primary">
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            setEditCustomer(null);
+            setModalOpen(true);
+          }}
+        >
           <svg
             width="13"
             height="13"
@@ -111,6 +144,20 @@ function Customers() {
         </div>
       </div>
 
+      {/* Error */}
+      {error && (
+        <div
+          className="p-[10px_13px] rounded-lg mb-[16px] text-[12px] font-inter"
+          style={{
+            background: "rgba(255,77,106,.1)",
+            border: "1px solid rgba(255,77,106,.2)",
+            color: "#ff4d6a",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
       {/* Table */}
       <div className="card">
         <div className="tbl-wrap">
@@ -119,14 +166,31 @@ function Customers() {
               <tr>
                 <th>Customer</th>
                 <th>Phone</th>
-                <th>Invoices</th>
-                <th>Balance Due</th>
+                <th>Address</th>
+                <th>Notes</th>
                 <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-8">
+                    <div className="flex items-center justify-center gap-2">
+                      <div
+                        className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
+                        style={{
+                          borderColor: "#e8141c",
+                          borderTopColor: "transparent",
+                        }}
+                      />
+                      <span style={{ color: "var(--text-muted)" }}>
+                        Loading...
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ) : customers.length === 0 ? (
                 <tr>
                   <td
                     colSpan={6}
@@ -137,11 +201,14 @@ function Customers() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((c) => (
-                  <tr key={c.name}>
+                customers.map((c, index) => (
+                  <tr key={c._id}>
                     <td>
                       <div className="flex items-center gap-3">
-                        <Avatar initials={c.initials} gradient={c.gradient} />
+                        <Avatar
+                          initials={getInitials(c.name)}
+                          gradient={getGradient(index)}
+                        />
                         <div>
                           <div
                             className="font-medium text-[13px]"
@@ -153,31 +220,49 @@ function Customers() {
                             className="text-[10px]"
                             style={{ color: "var(--text-secondary)" }}
                           >
-                            {c.address}
+                            {c.shop_name ?? "—"}
                           </div>
                         </div>
                       </div>
                     </td>
                     <td style={{ color: "var(--text-secondary)" }}>
-                      {c.phone}
+                      {c.phone ?? "—"}
                     </td>
-                    <td>{c.invoices}</td>
-                    <td
-                      className="font-inter font-bold"
-                      style={{ color: balanceColor[c.status] }}
-                    >
-                      {c.balance}
+                    <td style={{ color: "var(--text-secondary)" }}>
+                      {c.address ?? "—"}
                     </td>
-                    <td>
-                      <Badge status={c.status} />
+                    <td style={{ color: "var(--text-secondary)" }}>
+                      {c.notes ?? "—"}
                     </td>
                     <td>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ padding: "4px 10px", fontSize: "11px" }}
-                      >
-                        View
-                      </button>
+                      <Badge status={c.is_active ? "clear" : "unpaid"} />
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-[6px]">
+                        <button
+                          className="btn btn-ghost"
+                          style={{ padding: "4px 10px", fontSize: "11px" }}
+                          onClick={() => handleEdit(c)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          style={{
+                            padding: "4px 10px",
+                            fontSize: "11px",
+                            background: "rgba(255,77,106,.1)",
+                            border: "1px solid rgba(255,77,106,.2)",
+                            color: "#ff4d6a",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                            fontFamily: "Inter",
+                            fontWeight: 600,
+                          }}
+                          onClick={() => setDeleteId(c._id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -186,6 +271,98 @@ function Customers() {
           </table>
         </div>
       </div>
+
+      {/* Delete Confirmation */}
+      {deleteId && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+          onClick={() => setDeleteId(null)}
+        >
+          <div
+            className="w-full max-w-[380px] rounded-xl overflow-hidden"
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.4)",
+              animation: "fadeIn .2s ease",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center text-center p-[28px_24px_20px]">
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center mb-4"
+                style={{
+                  background: "rgba(255,77,106,.1)",
+                  border: "1px solid rgba(255,77,106,.2)",
+                }}
+              >
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#ff4d6a"
+                  strokeWidth="2"
+                >
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6" />
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                </svg>
+              </div>
+              <div
+                className="font-inter font-bold text-[16px] mb-2"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Delete Customer?
+              </div>
+              <div
+                className="text-[13px]"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                This customer will be marked as inactive and hidden from the
+                list.
+              </div>
+            </div>
+            <div className="flex gap-[9px] p-[0_24px_24px]">
+              <button
+                className="btn btn-ghost flex-1 justify-center"
+                onClick={() => setDeleteId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary flex-1 justify-center"
+                onClick={handleDelete}
+                disabled={deleteLoading}
+                style={{
+                  background: "#ff4d6a",
+                  boxShadow: "0 4px 18px rgba(255,77,106,.3)",
+                  opacity: deleteLoading ? 0.7 : 1,
+                }}
+              >
+                {deleteLoading ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Yes, Delete"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal */}
+      <CustomerModal
+        isOpen={modalOpen}
+        onClose={handleModalClose}
+        onSuccess={fetchCustomers}
+        customer={editCustomer}
+      />
     </div>
   );
 }
