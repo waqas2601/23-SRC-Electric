@@ -9,6 +9,7 @@ import Customers from "./pages/Customers";
 import Invoices from "./pages/Invoices";
 import NewInvoice from "./pages/NewInvoice";
 import Payments from "./pages/Payments";
+import InvoiceDetail from "./pages/InvoiceDetail";
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
             <Route path="customers" element={<Customers />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="new-invoice" element={<NewInvoice />} />
+            <Route path="invoices/:id" element={<InvoiceDetail />} />
             <Route path="payments" element={<Payments />} />
           </Route>
 

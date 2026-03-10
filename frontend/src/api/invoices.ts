@@ -10,6 +10,8 @@ export async function getInvoicesAPI(
   params?: {
     status?: string;
     customerId?: string;
+    fromDate?: string;
+    toDate?: string;
     page?: number;
     limit?: number;
   },
@@ -17,6 +19,8 @@ export async function getInvoicesAPI(
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
   if (params?.customerId) query.set("customerId", params.customerId);
+  if (params?.fromDate) query.set("fromDate", params.fromDate);
+  if (params?.toDate) query.set("toDate", params.toDate);
   if (params?.page) query.set("page", String(params.page));
   if (params?.limit) query.set("limit", String(params.limit));
 
@@ -27,10 +31,17 @@ export async function getInvoicesAPI(
   return res.json();
 }
 
+export async function getInvoiceByIdAPI(token: string, id: string) {
+  const res = await fetch(`${API_URL}/invoices/${id}`, {
+    headers: headers(token),
+  });
+  if (!res.ok) throw new Error("Failed to fetch invoice");
+  return res.json();
+}
+
 export async function addInvoiceAPI(
   token: string,
   data: {
-    invoiceNo?: string;
     customerId: string;
     invoiceDate: string;
     discount?: number;
@@ -47,15 +58,42 @@ export async function addInvoiceAPI(
     headers: headers(token),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create invoice");
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error?.message || "Failed to create invoice");
+  }
   return res.json();
 }
 
-export async function getInvoiceByIdAPI(token: string, id: string) {
+export async function updateInvoiceAPI(
+  token: string,
+  id: string,
+  data: {
+    invoiceDate?: string;
+    discount?: number;
+    notes?: string;
+    items?: {
+      productId: string;
+      quantity: number;
+      unitPriceSnapshot: number;
+    }[];
+  },
+) {
   const res = await fetch(`${API_URL}/invoices/${id}`, {
+    method: "PATCH",
+    headers: headers(token),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update invoice");
+  return res.json();
+}
+
+export async function deleteInvoiceAPI(token: string, id: string) {
+  const res = await fetch(`${API_URL}/invoices/${id}`, {
+    method: "DELETE",
     headers: headers(token),
   });
-  if (!res.ok) throw new Error("Failed to fetch invoice");
+  if (!res.ok) throw new Error("Failed to delete invoice");
   return res.json();
 }
 
