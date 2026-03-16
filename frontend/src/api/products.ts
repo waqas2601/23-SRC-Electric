@@ -20,16 +20,6 @@ interface ProductModelItem {
   sku_prefix: string;
 }
 
-export const DEFAULT_PRODUCT_MODELS = [
-  "A_SERIES",
-  "K_SERIES",
-  "R_SERIES",
-  "UNIQUE_SERIES",
-];
-
-export function normalizeModelLabel(value: string): string {
-  return value.trim().replace(/\s+/g, "_").toUpperCase();
-}
 
 export interface GetProductsResponse {
   items: Product[];
@@ -69,17 +59,11 @@ export async function getProductModelsAPI(token: string) {
   }
   const data = (await res.json()) as { items?: ProductModelItem[] };
   const labels = Array.from(
-    new Set(
-      (data.items ?? [])
-        .map((m) => normalizeModelLabel(m.label || ""))
-        .filter(Boolean),
-    ),
+    new Set((data.items ?? []).map((m) => m.label.trim()).filter(Boolean)),
   );
-
-  const fallbackLabels = DEFAULT_PRODUCT_MODELS.map(normalizeModelLabel);
   return {
     items: data.items ?? [],
-    models: labels.length > 0 ? labels : fallbackLabels,
+    models: labels,
   };
 }
 

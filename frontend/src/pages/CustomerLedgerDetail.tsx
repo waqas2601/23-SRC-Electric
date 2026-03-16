@@ -375,7 +375,7 @@ function CustomerLedgerDetail() {
             >
               Summary
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-[10px] text-[13px]">
+            <div className="flex flex-col gap-[8px] text-[13px]">
               <div
                 className="flex justify-between p-[10px] rounded-lg"
                 style={{
@@ -433,7 +433,7 @@ function CustomerLedgerDetail() {
                 </span>
               </div>
               <div
-                className="flex justify-between md:col-span-2 mt-[2px] pt-[12px]"
+                className="flex justify-between mt-[2px] pt-[12px]"
                 style={{ borderTop: "1px solid var(--border)" }}
               >
                 <span

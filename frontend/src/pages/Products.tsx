@@ -3,10 +3,8 @@ import Chip from "../components/ui/Chip";
 import ProductModal from "../components/ui/ProductModal";
 import { useAuth } from "../context/AuthContext";
 import {
-  DEFAULT_PRODUCT_MODELS,
   getProductsAPI,
   getProductModelsAPI,
-  normalizeModelLabel,
   deleteProductAPI,
   type Product,
 } from "../api/products";
@@ -40,7 +38,7 @@ function Products() {
     if (!token) return;
     getProductModelsAPI(token)
       .then((data) => setModels(data.models ?? []))
-      .catch(() => setModels(DEFAULT_PRODUCT_MODELS));
+      .catch(() => setModels([]));
   }, [token]);
 
   const fetchProducts = useCallback(async () => {
@@ -93,8 +91,7 @@ function Products() {
     return value.replace(/_/g, " ");
   };
 
-  const toModelKey = (value?: string | null) =>
-    value ? normalizeModelLabel(value) : "";
+  const toModelKey = (value?: string | null) => value?.trim() ?? "";
 
   const modelProducts = useMemo(
     () =>

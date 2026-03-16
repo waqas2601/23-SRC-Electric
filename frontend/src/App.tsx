@@ -45,10 +45,6 @@ function App() {
                 path="ledger/view/:customerId"
                 element={<CustomerLedgerDetail />}
               />
-              <Route
-                path="ledger/:customerId"
-                element={<CustomerLedgerDetail />}
-              />
             </Route>
 
             {/* Catch all */}

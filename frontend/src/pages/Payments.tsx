@@ -40,7 +40,6 @@ function Payments() {
       while (page <= totalPages) {
         const data = await getLedgerPaymentsAPI(token!, {
           method: activeFilter || undefined,
-          q: search.trim() || undefined,
           page,
           limit: 100,
         });
@@ -56,7 +55,7 @@ function Payments() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, activeFilter, search]);
+  }, [token, activeFilter]);
 
   useEffect(() => {
     fetchPayments();
@@ -157,7 +156,16 @@ function Payments() {
                   </td>
                 </tr>
               ) : (
-                payments.map((p) => (
+                payments
+                .filter((p) => {
+                  const q = search.trim().toLowerCase();
+                  if (!q) return true;
+                  return (
+                    p.customer_id?.name?.toLowerCase().includes(q) ||
+                    p.customer_id?.shop_name?.toLowerCase().includes(q)
+                  );
+                })
+                .map((p) => (
                   <tr key={p._id}>
                     <td style={{ color: "var(--text-secondary)" }}>
                       {formatDate(p.payment_date)}

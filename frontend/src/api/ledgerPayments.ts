@@ -55,7 +55,6 @@ export async function getLedgerPaymentsAPI(
   params?: {
     customerId?: string;
     method?: "CASH" | "BANK" | "OTHER";
-    q?: string;
     page?: number;
     limit?: number;
   },
@@ -63,7 +62,6 @@ export async function getLedgerPaymentsAPI(
   const query = new URLSearchParams();
   if (params?.customerId) query.set("customerId", params.customerId);
   if (params?.method) query.set("method", params.method);
-  if (params?.q) query.set("q", params.q);
   if (params?.page) query.set("page", String(params.page));
   if (params?.limit) query.set("limit", String(params.limit));
 

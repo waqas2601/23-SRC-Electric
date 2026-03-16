@@ -2,29 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getCustomersAPI, type Customer } from "../api/customers";
-import { getInvoicesAPI } from "../api/invoices";
-
-interface InvoiceListItem {
-  _id: string;
-  customer_id:
-    | {
-        _id: string;
-      }
-    | string;
-}
-
-function customerIdOf(invoice: InvoiceListItem): string {
-  return typeof invoice.customer_id === "string"
-    ? invoice.customer_id
-    : invoice.customer_id?._id;
-}
 
 function Ledger() {
   const { token } = useAuth();
   const navigate = useNavigate();
 
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -40,8 +23,6 @@ function Ledger() {
     setError("");
     try {
       const allCustomers: Customer[] = [];
-      const allInvoices: InvoiceListItem[] = [];
-
       let cPage = 1;
       let cTotalPages = 1;
       while (cPage <= cTotalPages) {
@@ -50,18 +31,7 @@ function Ledger() {
         cTotalPages = data.pagination?.totalPages ?? 1;
         cPage += 1;
       }
-
-      let iPage = 1;
-      let iTotalPages = 1;
-      while (iPage <= iTotalPages) {
-        const data = await getInvoicesAPI(token, { page: iPage, limit: 100 });
-        allInvoices.push(...((data.items ?? []) as InvoiceListItem[]));
-        iTotalPages = data.pagination?.totalPages ?? 1;
-        iPage += 1;
-      }
-
       setCustomers(allCustomers);
-      setInvoices(allInvoices);
     } catch (err: any) {
       setError(err.message || "Failed to load ledger customers");
     } finally {
@@ -73,22 +43,15 @@ function Ledger() {
     fetchData();
   }, [fetchData]);
 
-  const ledgerCustomers = useMemo(() => {
-    const invoiceCustomerIds = new Set(
-      invoices.map(customerIdOf).filter(Boolean),
-    );
-    return customers.filter((c) => invoiceCustomerIds.has(c._id));
-  }, [customers, invoices]);
-
   const filteredCustomers = useMemo(() => {
     const q = searchText.trim().toLowerCase();
-    if (!q) return ledgerCustomers;
-    return ledgerCustomers.filter((c) => {
+    if (!q) return customers;
+    return customers.filter((c) => {
       const name = c.name?.toLowerCase() ?? "";
       const shop = c.shop_name?.toLowerCase() ?? "";
       return name.includes(q) || shop.includes(q);
     });
-  }, [ledgerCustomers, searchText]);
+  }, [customers, searchText]);
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>

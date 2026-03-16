@@ -2,12 +2,10 @@ import { useState, useEffect } from "react";
 import Modal from "./Modal";
 import { useAuth } from "../../context/AuthContext";
 import {
-  DEFAULT_PRODUCT_MODELS,
   addProductAPI,
   deleteProductAPI,
   updateProductAPI,
   getProductModelsAPI,
-  normalizeModelLabel,
   type Product,
 } from "../../api/products";
 import { useToast } from "../../context/ToastContext";
@@ -45,8 +43,7 @@ function ProductModal({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const toModelKey = (value?: string | null) =>
-    value ? normalizeModelLabel(value) : "";
+  const toModelKey = (value?: string | null) => value?.trim() ?? "";
 
   // Fetch model enum list
   useEffect(() => {
@@ -57,7 +54,7 @@ function ProductModal({
         setModels(data.models ?? []);
       })
       .catch(() => {
-        setModels(DEFAULT_PRODUCT_MODELS);
+        setModels([]);
       });
   }, [isOpen, token]);
 

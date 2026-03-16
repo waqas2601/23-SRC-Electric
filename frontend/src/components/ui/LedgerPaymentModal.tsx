@@ -107,7 +107,7 @@ function LedgerPaymentModal({
       return;
     }
 
-    const amountNum = Number(amount);
+    const amountNum = Math.round(Number(amount));
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
       setError("Please enter a valid amount");
       return;
