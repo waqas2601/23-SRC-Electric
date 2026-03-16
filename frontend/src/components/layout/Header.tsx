@@ -19,7 +19,6 @@ const PAGE_INFO: Record<string, { title: string; sub: string }> = {
 function Header({ onMenuClick, theme, onThemeChange }: HeaderProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const showHeaderSearch = location.pathname !== "/dashboard";
   const info = location.pathname.startsWith("/ledger/")
     ? { title: "Ledger Detail", sub: "Customer ledger statement" }
     : (PAGE_INFO[location.pathname] ?? { title: "SRC Electric", sub: "" });
@@ -76,37 +75,6 @@ function Header({ onMenuClick, theme, onThemeChange }: HeaderProps) {
       </div>
 
       <div className="flex-1" />
-
-      {/* Search */}
-      {showHeaderSearch && (
-        <div
-          className="hidden md:flex items-center gap-2 px-[13px] py-[8px] rounded-lg"
-          style={{
-            background: "var(--bg-card)",
-            border: "1px solid var(--border)",
-            width: "190px",
-          }}
-        >
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            style={{ color: "var(--text-muted)", flexShrink: 0 }}
-          >
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search..."
-            className="bg-transparent border-none outline-none w-full text-[12px] font-mono"
-            style={{ color: "var(--text-primary)" }}
-          />
-        </div>
-      )}
 
       {/* Theme Toggle */}
       <div

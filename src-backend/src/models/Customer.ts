@@ -7,6 +7,16 @@ const customerSchema = new mongoose.Schema(
     address: { type: String, trim: true },
     phone: { type: String, trim: true },
     notes: { type: String, trim: true },
+    opening_balance: {
+      type: Number,
+      default: 0,
+      min: 0,
+      validate: {
+        validator: Number.isInteger,
+        message: "opening_balance must be a whole integer",
+      },
+    },
+    opening_balance_set: { type: Boolean, default: false },
     is_active: { type: Boolean, default: true },
   },
   {

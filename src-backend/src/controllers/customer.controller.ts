@@ -4,6 +4,38 @@ import Customer from "../models/Customer.js";
 import Invoice from "../models/Invoice.js";
 import { AppError } from "../utils/AppError.js";
 
+type CustomerPaymentStatus = "clear" | "partial" | "unpaid" | "overdue";
+
+function deriveCustomerPaymentStatus(
+  invoices: Array<{ status?: string; invoice_date?: Date | string }>,
+): CustomerPaymentStatus {
+  const now = new Date();
+
+  for (const invoice of invoices) {
+    if (invoice.status === "unpaid") {
+      const invoiceDate = invoice.invoice_date
+        ? new Date(invoice.invoice_date)
+        : null;
+      if (
+        invoiceDate &&
+        now.getTime() - invoiceDate.getTime() > 7 * 24 * 60 * 60 * 1000
+      ) {
+        return "overdue";
+      }
+    }
+  }
+
+  if (invoices.some((i) => i.status === "partial")) {
+    return "partial";
+  }
+
+  if (invoices.some((i) => i.status === "unpaid")) {
+    return "unpaid";
+  }
+
+  return "clear";
+}
+
 function assertValidObjectId(id: string): void {
   if (!mongoose.isValidObjectId(id)) {
     throw new AppError(400, "BAD_REQUEST", "Invalid customer id");
@@ -49,8 +81,33 @@ export async function listCustomers(req: Request, res: Response) {
     Customer.countDocuments(filter),
   ]);
 
+  const customerIds = items.map((customer) => customer._id);
+  const invoices = await Invoice.find(
+    { customer_id: { $in: customerIds } },
+    { customer_id: 1, status: 1, invoice_date: 1 },
+  ).lean();
+
+  const invoiceMap = new Map<
+    string,
+    Array<{ status?: string; invoice_date?: Date | string }>
+  >();
+  for (const invoice of invoices) {
+    const key = String(invoice.customer_id);
+    const list = invoiceMap.get(key) ?? [];
+    list.push({ status: invoice.status, invoice_date: invoice.invoice_date });
+    invoiceMap.set(key, list);
+  }
+
+  const normalizedItems = items.map((customer) => {
+    const customerInvoices = invoiceMap.get(String(customer._id)) ?? [];
+    return {
+      ...customer.toObject(),
+      payment_status: deriveCustomerPaymentStatus(customerInvoices),
+    };
+  });
+
   return res.json({
-    items,
+    items: normalizedItems,
     pagination: {
       page: pageNum,
       limit: limitNum,
@@ -65,6 +122,35 @@ export async function getCustomerById(req: Request, res: Response) {
   assertValidObjectId(id);
 
   const customer = await Customer.findById(id);
+  if (!customer) {
+    throw new AppError(404, "NOT_FOUND", "Customer not found");
+  }
+
+  return res.json(customer);
+}
+
+export async function setCustomerOpeningBalance(req: Request, res: Response) {
+  const { id } = req.params;
+  assertValidObjectId(id);
+
+  const { amount } = req.body as { amount?: number };
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0) {
+    throw new AppError(
+      400,
+      "BAD_REQUEST",
+      "amount must be a non-negative whole integer",
+    );
+  }
+
+  const customer = await Customer.findByIdAndUpdate(
+    id,
+    {
+      opening_balance: amount,
+      opening_balance_set: true,
+    },
+    { new: true, runValidators: true },
+  );
+
   if (!customer) {
     throw new AppError(404, "NOT_FOUND", "Customer not found");
   }

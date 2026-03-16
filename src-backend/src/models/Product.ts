@@ -15,6 +15,12 @@ const productSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    model: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
     category: {
       type: String,
       enum: PRODUCT_CATEGORIES,
@@ -40,6 +46,7 @@ const productSchema = new mongoose.Schema(
 );
 
 productSchema.index({ category: 1 });
+productSchema.index({ model: 1 });
 productSchema.index({ category: 1, name: 1 });
 
 const Product = mongoose.model("Product", productSchema);
