@@ -288,6 +288,20 @@ body {
   background: var(--electric-glow);
 }
 
+.tbl-products th,
+.tbl-products td,
+.tbl-customers th,
+.tbl-customers td {
+  white-space: nowrap;
+}
+
+.tbl-invoices th,
+.tbl-invoices td,
+.tbl-invoice-detail th,
+.tbl-invoice-detail td {
+  white-space: nowrap;
+}
+
 /* ════════════════════════════════
    CHIP
 ════════════════════════════════ */

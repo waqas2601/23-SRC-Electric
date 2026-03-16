@@ -50,6 +50,7 @@ export async function addInvoiceAPI(
       productId: string;
       quantity: number;
       unitPriceSnapshot: number;
+      boxQty?: number;
     }[];
   },
 ) {
@@ -76,6 +77,7 @@ export async function updateInvoiceAPI(
       productId: string;
       quantity: number;
       unitPriceSnapshot: number;
+      boxQty?: number;
     }[];
   },
 ) {
@@ -84,7 +86,16 @@ export async function updateInvoiceAPI(
     headers: headers(token),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to update invoice");
+  if (!res.ok) {
+    let message = "Failed to update invoice";
+    try {
+      const err = await res.json();
+      message = err?.error?.message || err?.message || message;
+    } catch {
+      // fallback message above
+    }
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -94,6 +105,36 @@ export async function deleteInvoiceAPI(token: string, id: string) {
     headers: headers(token),
   });
   if (!res.ok) throw new Error("Failed to delete invoice");
+  return res.json();
+}
+
+export async function appendInvoiceItemsAPI(
+  token: string,
+  id: string,
+  data: {
+    items: {
+      productId: string;
+      quantity: number;
+      unitPriceSnapshot?: number;
+      boxQty?: number;
+    }[];
+  },
+) {
+  const res = await fetch(`${API_URL}/invoices/${id}/items`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    let message = "Failed to append invoice items";
+    try {
+      const err = await res.json();
+      message = err?.error?.message || err?.message || message;
+    } catch {
+      // fallback message above
+    }
+    throw new Error(message);
+  }
   return res.json();
 }
 

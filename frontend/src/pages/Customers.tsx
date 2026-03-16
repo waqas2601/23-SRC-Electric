@@ -3,19 +3,12 @@ import Badge from "../components/ui/Badge";
 import Avatar from "../components/ui/Avatar";
 import CustomerModal from "../components/ui/CustomerModal";
 import { useAuth } from "../context/AuthContext";
-import { getCustomersAPI, deleteCustomerAPI } from "../api/customers";
-
-interface Customer {
-  _id: string;
-  name: string;
-  shop_name?: string;
-  address?: string;
-  phone?: string;
-  notes?: string;
-  is_active: boolean;
-  balance?: number;
-  status?: "paid" | "partial" | "unpaid" | "overdue" | "clear";
-}
+import {
+  getCustomersAPI,
+  deleteCustomerAPI,
+  type Customer,
+} from "../api/customers";
+import { useToast } from "../context/ToastContext";
 
 function getInitials(name: string) {
   return name
@@ -34,6 +27,7 @@ function getGradient(index: number) {
 
 function Customers() {
   const { token } = useAuth();
+  const { showToast } = useToast();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -44,21 +38,28 @@ function Customers() {
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
+    if (!token) {
+      setCustomers([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
-      const data = await getCustomersAPI(token!, {
+      const data = await getCustomersAPI(token, {
         q: search || undefined,
         limit: 50,
       });
-      console.log("Customers API:", data);
-      setCustomers(data.items ?? data.customers ?? data.data ?? []);
+      setCustomers(data.items ?? []);
     } catch (err: any) {
-      setError(err.message || "Failed to load customers");
+      const message = err.message || "Failed to load customers";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsLoading(false);
     }
-  }, [token, search]);
+  }, [token, search, showToast]);
 
   useEffect(() => {
     fetchCustomers();
@@ -70,14 +71,15 @@ function Customers() {
   };
 
   const handleDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteId || !token) return;
     setDeleteLoading(true);
     try {
-      await deleteCustomerAPI(token!, deleteId);
+      await deleteCustomerAPI(token, deleteId);
       setDeleteId(null);
-      fetchCustomers();
+      await fetchCustomers();
+      showToast("success", "Customer deleted successfully");
     } catch (err: any) {
-      alert(err.message || "Failed to delete customer");
+      showToast("error", err.message || "Failed to delete customer");
     } finally {
       setDeleteLoading(false);
     }
@@ -161,7 +163,7 @@ function Customers() {
       {/* Table */}
       <div className="card">
         <div className="tbl-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-customers">
             <thead>
               <tr>
                 <th>Customer</th>
@@ -211,14 +213,16 @@ function Customers() {
                         />
                         <div>
                           <div
-                            className="font-medium text-[13px]"
+                            className="font-medium text-[13px] truncate max-w-[140px] sm:max-w-[220px]"
                             style={{ color: "var(--text-primary)" }}
+                            title={c.name}
                           >
                             {c.name}
                           </div>
                           <div
-                            className="text-[10px]"
+                            className="text-[10px] truncate max-w-[140px] sm:max-w-[220px]"
                             style={{ color: "var(--text-secondary)" }}
+                            title={c.shop_name ?? ""}
                           >
                             {c.shop_name ?? "—"}
                           </div>
@@ -226,19 +230,34 @@ function Customers() {
                       </div>
                     </td>
                     <td style={{ color: "var(--text-secondary)" }}>
-                      {c.phone ?? "—"}
+                      <div
+                        className="truncate max-w-[130px]"
+                        title={c.phone ?? ""}
+                      >
+                        {c.phone ?? "—"}
+                      </div>
                     </td>
                     <td style={{ color: "var(--text-secondary)" }}>
-                      {c.address ?? "—"}
+                      <div
+                        className="truncate max-w-[150px] sm:max-w-[220px]"
+                        title={c.address ?? ""}
+                      >
+                        {c.address ?? "—"}
+                      </div>
                     </td>
                     <td style={{ color: "var(--text-secondary)" }}>
-                      {c.notes ?? "—"}
+                      <div
+                        className="truncate max-w-[150px] sm:max-w-[220px]"
+                        title={c.notes ?? ""}
+                      >
+                        {c.notes ?? "—"}
+                      </div>
                     </td>
                     <td>
-                      <Badge status={c.is_active ? "clear" : "unpaid"} />
+                      <Badge status={c.payment_status ?? "clear"} />
                     </td>
                     <td>
-                      <div className="flex items-center gap-[6px]">
+                      <div className="flex items-center gap-[6px] whitespace-nowrap">
                         <button
                           className="btn btn-ghost"
                           style={{ padding: "4px 10px", fontSize: "11px" }}
@@ -321,8 +340,8 @@ function Customers() {
                 className="text-[13px]"
                 style={{ color: "var(--text-secondary)" }}
               >
-                This customer will be marked as inactive and hidden from the
-                list.
+                This will permanently delete the customer and all related
+                invoices and payments.
               </div>
             </div>
             <div className="flex gap-[9px] p-[0_24px_24px]">

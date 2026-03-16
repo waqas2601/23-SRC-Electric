@@ -1,37 +1,28 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import {
-  getInvoiceByIdAPI,
-  getInvoicePaymentsAPI,
-  addPaymentToInvoiceAPI,
-} from "../api/invoices";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import Badge from "../components/ui/Badge";
-import Avatar from "../components/ui/Avatar";
-import Modal from "../components/ui/Modal";
+import {
+  appendInvoiceItemsAPI,
+  deleteInvoiceAPI,
+  getInvoiceByIdAPI,
+  updateInvoiceAPI,
+} from "../api/invoices";
+import { getProductsAPI, type Product } from "../api/products";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { downloadInvoicePdf } from "../utils/invoicePdf";
 
-interface LineItem {
-  _id: string;
-  product_id: string;
-  product_name_snapshot: string;
-  sku_snapshot: string;
-  quantity: number;
-  unit_price_snapshot: number;
-  line_total: number;
-}
-
-interface Payment {
-  _id: string;
-  payment_date: string;
-  amount: number;
-  method: string;
-  reference?: string;
-  notes?: string;
-}
-
-interface Invoice {
+interface InvoiceDetailData {
   _id: string;
   invoice_no: string;
+  invoice_date: string;
+  status: "unpaid" | "partial" | "completed";
+  subtotal: number;
+  discount: number;
+  total_amount: number;
+  paid_amount: number;
+  remaining_amount: number;
+  notes?: string;
   customer_id: {
     _id: string;
     name: string;
@@ -39,23 +30,25 @@ interface Invoice {
     phone?: string;
     address?: string;
   };
-  invoice_date: string;
-  total_amount: number;
-  paid_amount: number;
-  remaining_amount: number;
-  discount: number;
-  notes?: string;
-  status: "unpaid" | "partial" | "completed";
-  items: LineItem[];
+  items: Array<{
+    _id?: string;
+    product_name_snapshot: string;
+    sku_snapshot?: string;
+    quantity: number;
+    box_qty?: number;
+    unit_price_snapshot: number;
+    line_total: number;
+  }>;
 }
 
-const statusMap: Record<string, "unpaid" | "partial" | "paid"> = {
+const statusMap: Record<
+  InvoiceDetailData["status"],
+  "unpaid" | "partial" | "paid"
+> = {
   unpaid: "unpaid",
   partial: "partial",
   completed: "paid",
 };
-
-const GRADIENTS = ["default", "cyan", "green", "purple", "red"];
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString("en-GB", {
@@ -65,608 +58,878 @@ function formatDate(dateStr: string) {
   });
 }
 
-function InvoiceDetail() {
-  const { id } = useParams();
-  const { token } = useAuth();
-  const navigate = useNavigate();
+function mixProductsByModel(items: Product[]) {
+  const order = ["A_SERIES", "K_SERIES", "R_SERIES", "UNIQUE_SERIES"];
+  const buckets = new Map<string, Product[]>();
 
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  order.forEach((key) => buckets.set(key, []));
+  items.forEach((item) => {
+    const key = String(item.model || "").toUpperCase();
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(item);
+  });
+
+  const mixed: Product[] = [];
+  let hasMore = true;
+  while (hasMore) {
+    hasMore = false;
+    for (const key of [...order, ...Array.from(buckets.keys())]) {
+      const bucket = buckets.get(key) ?? [];
+      if (bucket.length > 0) {
+        mixed.push(bucket.shift()!);
+        hasMore = true;
+      }
+    }
+  }
+
+  return mixed;
+}
+
+function InvoiceDetail() {
+  const { token } = useAuth();
+  const { showToast } = useToast();
+  const navigate = useNavigate();
+  const { id } = useParams();
+
+  const [invoice, setInvoice] = useState<InvoiceDetailData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
-  // Payment modal
-  const [paymentModal, setPaymentModal] = useState(false);
-  const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().split("T")[0],
-  );
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK" | "OTHER">(
-    "CASH",
-  );
-  const [paymentReference, setPaymentReference] = useState("");
-  const [paymentNotes, setPaymentNotes] = useState("");
-  const [paymentError, setPaymentError] = useState("");
-  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [itemQuery, setItemQuery] = useState("");
+  const [itemResults, setItemResults] = useState<Product[]>([]);
+  const [itemLoading, setItemLoading] = useState(false);
+  const [showItemResults, setShowItemResults] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [draftQty, setDraftQty] = useState(1);
+  const [draftBoxQty, setDraftBoxQty] = useState("");
+  const [appendLoading, setAppendLoading] = useState(false);
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const [showDiscountEditor, setShowDiscountEditor] = useState(false);
+  const [discountType, setDiscountType] = useState<"PKR" | "PERCENT">("PKR");
+  const [discountValue, setDiscountValue] = useState(0);
+  const [discountInput, setDiscountInput] = useState("");
 
-  const fetchData = async () => {
-    if (!id) return;
+  const fetchInvoice = useCallback(async () => {
+    if (!token || !id) {
+      setIsLoading(false);
+      setError("Invoice not found");
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
-      const [invData, payData] = await Promise.all([
-        getInvoiceByIdAPI(token!, id),
-        getInvoicePaymentsAPI(token!, id),
-      ]);
-      setInvoice(invData.invoice ?? invData);
-      setPayments(payData.payments ?? []);
+      const data = await getInvoiceByIdAPI(token, id);
+      setInvoice(data as InvoiceDetailData);
     } catch (err: any) {
       setError(err.message || "Failed to load invoice");
+      setInvoice(null);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [token, id]);
 
   useEffect(() => {
-    fetchData();
-  }, [id]);
+    fetchInvoice();
+  }, [fetchInvoice]);
 
-  const handleAddPayment = async () => {
-    if (!paymentAmount || Number(paymentAmount) <= 0) {
-      setPaymentError("Please enter a valid amount");
+  useEffect(() => {
+    if (!token) {
+      setItemResults([]);
       return;
     }
-    if (!id) return;
-    setPaymentError("");
-    setPaymentLoading(true);
+
+    const q = itemQuery.trim();
+    const timeout = setTimeout(async () => {
+      setItemLoading(true);
+      try {
+        const data = await getProductsAPI(token, {
+          q: q || undefined,
+          isActive: true,
+          limit: q ? 8 : 50,
+        });
+        const items = (data.items ?? []) as Product[];
+        setItemResults(q ? items : mixProductsByModel(items).slice(0, 20));
+      } catch {
+        setItemResults([]);
+      } finally {
+        setItemLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [itemQuery, token]);
+
+  const totals = useMemo(() => {
+    if (!invoice) {
+      return { subtotal: 0, discount: 0, total: 0, paid: 0, remaining: 0 };
+    }
+
+    return {
+      subtotal: invoice.subtotal ?? 0,
+      discount: invoice.discount ?? 0,
+      total: invoice.total_amount ?? 0,
+      paid: invoice.paid_amount ?? 0,
+      remaining: invoice.remaining_amount ?? 0,
+    };
+  }, [invoice]);
+
+  useEffect(() => {
+    if (!invoice) return;
+    setDiscountType("PKR");
+    setDiscountValue(invoice.discount ?? 0);
+    setDiscountInput("");
+    setShowDiscountEditor(false);
+  }, [invoice]);
+
+  const computedDiscount = useMemo(() => {
+    if (!invoice) return 0;
+    const subtotal = invoice.subtotal ?? 0;
+    const raw =
+      discountType === "PKR"
+        ? discountValue
+        : (subtotal * Math.max(0, discountValue)) / 100;
+    return Math.max(0, Math.round(raw));
+  }, [invoice, discountType, discountValue]);
+
+  const handleDeleteInvoice = async () => {
+    if (!token || !invoice || deleting) return;
+
+    const ok = window.confirm(
+      `Delete invoice #${invoice.invoice_no}? This cannot be undone.`,
+    );
+    if (!ok) return;
+
+    setDeleting(true);
     try {
-      await addPaymentToInvoiceAPI(token!, id, {
-        paymentDate,
-        amount: Number(paymentAmount),
-        method: paymentMethod,
-        reference: paymentReference || undefined,
-        notes: paymentNotes || undefined,
-      });
-      setPaymentModal(false);
-      setPaymentAmount("");
-      setPaymentReference("");
-      setPaymentNotes("");
-      fetchData();
+      await deleteInvoiceAPI(token, invoice._id);
+      showToast("success", "Invoice deleted successfully");
+      navigate("/invoices");
     } catch (err: any) {
-      setPaymentError(err.message || "Failed to add payment");
+      showToast("error", err.message || "Failed to delete invoice");
     } finally {
-      setPaymentLoading(false);
+      setDeleting(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div
-          className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin"
-          style={{ borderColor: "#e8141c", borderTopColor: "transparent" }}
-        />
-      </div>
-    );
-  }
+  const handleExportPdf = async () => {
+    if (!invoice) return;
 
-  if (error || !invoice) {
-    return (
-      <div className="text-center py-20">
-        <div className="text-[14px] mb-4" style={{ color: "#ff4d6a" }}>
-          {error}
-        </div>
-        <button className="btn btn-ghost" onClick={() => navigate("/invoices")}>
-          ← Back to Invoices
-        </button>
-      </div>
-    );
-  }
+    await downloadInvoicePdf({
+      invoiceNo: invoice.invoice_no,
+      invoiceDate: invoice.invoice_date,
+      customerName: invoice.customer_id?.name ?? "—",
+      subtotal: invoice.subtotal ?? 0,
+      discount: invoice.discount ?? 0,
+      total: invoice.total_amount ?? 0,
+      items: (invoice.items ?? []).map((item) => ({
+        productName: item.product_name_snapshot,
+        sku: item.sku_snapshot,
+        quantity: item.quantity ?? 0,
+        boxQty: item.box_qty ?? null,
+        unitPrice: item.unit_price_snapshot ?? 0,
+        lineTotal: item.line_total ?? 0,
+      })),
+    });
+  };
 
-  const initials = invoice.customer_id?.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const handleSelectProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setItemQuery(product.name);
+    setShowItemResults(false);
+    setDraftQty(1);
+    setDraftBoxQty("");
+  };
+
+  const handleAppendItem = async () => {
+    if (!token || !invoice || !selectedProduct || appendLoading) return;
+
+    const parsed = draftBoxQty.trim();
+    if (parsed !== "" && Number.isNaN(Number(parsed))) {
+      showToast("error", "Box quantity must be a valid number");
+      return;
+    }
+
+    const qty = Math.max(1, draftQty);
+    const boxQty = parsed === "" ? null : Math.max(0, Number(parsed));
+
+    setAppendLoading(true);
+    try {
+      await appendInvoiceItemsAPI(token, invoice._id, {
+        items: [
+          {
+            productId: selectedProduct._id,
+            quantity: qty,
+            unitPriceSnapshot: selectedProduct.price,
+            ...(boxQty !== null ? { boxQty } : {}),
+          },
+        ],
+      });
+
+      showToast("success", "Item added to invoice");
+      setSelectedProduct(null);
+      setItemQuery("");
+      setDraftQty(1);
+      setDraftBoxQty("");
+      setShowItemResults(false);
+      await fetchInvoice();
+    } catch (err: any) {
+      showToast("error", err.message || "Failed to add item");
+    } finally {
+      setAppendLoading(false);
+    }
+  };
+
+  const handleUpdateDiscount = async () => {
+    if (!token || !invoice || discountSaving) return;
+
+    if (!Number.isFinite(discountValue) || discountValue < 0) {
+      showToast("error", "Discount must be a valid non-negative number");
+      return;
+    }
+
+    if (discountType === "PERCENT" && discountValue > 100) {
+      showToast("error", "Discount percentage cannot exceed 100%");
+      return;
+    }
+
+    const discount = computedDiscount;
+    if (discount > (invoice.subtotal ?? 0)) {
+      showToast("error", "Discount cannot be greater than subtotal");
+      return;
+    }
+
+    setDiscountSaving(true);
+    try {
+      await updateInvoiceAPI(token, invoice._id, {
+        discount,
+      });
+      showToast("success", "Discount updated successfully");
+      await fetchInvoice();
+    } catch (err: any) {
+      showToast("error", err.message || "Failed to update discount");
+    } finally {
+      setDiscountSaving(false);
+    }
+  };
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
-      {/* Page Header */}
-      <div className="flex items-center justify-between mb-[18px] flex-wrap gap-[10px]">
+      <div className="flex items-center justify-between mb-[14px] flex-wrap gap-[10px]">
         <div>
-          <button
-            className="text-[11px] mb-[6px] flex items-center gap-1 transition-all"
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-            }}
-            onClick={() => navigate("/invoices")}
-          >
-            ← Back to Invoices
-          </button>
           <div
-            className="font-inter font-extrabold text-[20px]"
+            className="font-inter font-extrabold text-[18px]"
             style={{ color: "var(--text-primary)" }}
           >
             Invoice{" "}
             <span style={{ color: "var(--electric)" }}>
-              #{invoice.invoice_no}
+              #{invoice?.invoice_no ?? id}
             </span>
           </div>
-        </div>
-        <div className="flex gap-[9px] items-center">
-          <Badge status={statusMap[invoice.status]} />
-          {invoice.status !== "completed" && (
-            <button
-              className="btn btn-primary"
-              onClick={() => setPaymentModal(true)}
+          {invoice?.invoice_date && (
+            <div
+              className="text-[12px]"
+              style={{ color: "var(--text-secondary)" }}
             >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-              >
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Add Payment
+              Date: {formatDate(invoice.invoice_date)}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-[8px] flex-wrap">
+          <button
+            className="btn btn-ghost"
+            onClick={() => navigate("/invoices")}
+          >
+            ← Back to Invoices
+          </button>
+          {invoice && (
+            <button
+              className="btn btn-ghost"
+              onClick={handleExportPdf}
+              title="Export / Print"
+            >
+              Export PDF
             </button>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-[16px]">
-        {/* LEFT */}
-        <div className="flex flex-col gap-[14px]">
-          {/* Customer Info */}
-          <div className="card">
-            <div className="card-hdr">
-              <div
-                className="card-title"
-                style={{ color: "var(--text-primary)" }}
-              >
-                Customer Details
+      {error && (
+        <div
+          className="p-[10px_13px] rounded-lg mb-[14px] text-[12px] font-inter"
+          style={{
+            background: "rgba(255,77,106,.1)",
+            border: "1px solid rgba(255,77,106,.2)",
+            color: "#ff4d6a",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {isLoading ? (
+        <div
+          className="card p-[20px] text-center font-medium text-[15px]"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          Loading invoice...
+        </div>
+      ) : !invoice ? (
+        <div
+          className="card p-[20px] text-center font-medium text-[15px]"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          Invoice not found.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-[10px]">
+          <div className="card p-[12px]">
+            <div className="flex items-start justify-between gap-3 mb-[12px]">
+              <div>
+                <div
+                  className="text-[11px] tracking-[1px]"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  INVOICE
+                </div>
+                <div
+                  className="font-inter font-extrabold text-[20px] leading-[1.12]"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  #{invoice.invoice_no}
+                </div>
+              </div>
+              <div className="flex items-center gap-[8px]">
+                <Badge status={statusMap[invoice.status]} />
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleDeleteInvoice}
+                  disabled={deleting}
+                  style={{
+                    color: "#ff4d6a",
+                    borderColor: "rgba(255,77,106,.3)",
+                  }}
+                >
+                  {deleting ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-end justify-between gap-[10px] flex-wrap mb-[10px]">
+              <div>
+                <div
+                  className="font-inter font-semibold text-[19px] leading-[1.12]"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  {invoice.customer_id?.name ?? "—"}
+                </div>
+                <div
+                  className="text-[13px] font-medium"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  {invoice.customer_id?.shop_name || "No shop name"}
+                </div>
               </div>
               <div
-                className="text-[11px]"
+                className="text-[13px]"
                 style={{ color: "var(--text-secondary)" }}
               >
                 {formatDate(invoice.invoice_date)}
               </div>
             </div>
-            <div className="p-[15px_17px] flex items-center gap-[13px]">
-              <Avatar initials={initials} gradient={GRADIENTS[0]} size="lg" />
-              <div>
-                <div
-                  className="font-semibold text-[15px]"
-                  style={{ color: "var(--text-primary)" }}
-                >
-                  {invoice.customer_id?.name}
-                </div>
-                <div
-                  className="text-[12px]"
+
+            <div
+              className="h-[1px] mb-[12px]"
+              style={{ background: "var(--border)" }}
+            />
+
+            <div className="flex flex-col gap-[8px] text-[14px]">
+              <div className="flex items-center justify-between">
+                <span
+                  className="text-[14px] font-medium"
                   style={{ color: "var(--text-secondary)" }}
                 >
-                  {invoice.customer_id?.shop_name}
-                </div>
-                <div
-                  className="text-[11px]"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  {invoice.customer_id?.phone}{" "}
-                  {invoice.customer_id?.address
-                    ? `· ${invoice.customer_id.address}`
-                    : ""}
-                </div>
+                  Subtotal
+                </span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  PKR {totals.subtotal.toLocaleString()}
+                </span>
               </div>
-            </div>
-          </div>
+              {!showDiscountEditor && (
+                <div className="flex items-center justify-between">
+                  <span
+                    className="text-[14px] font-medium"
+                    style={{ color: "#ff4d6a" }}
+                  >
+                    Discount
+                  </span>
+                  <span style={{ color: "#ff4d6a" }}>
+                    - PKR {totals.discount.toLocaleString()}
+                  </span>
+                </div>
+              )}
 
-          {/* Line Items */}
-          <div className="card">
-            <div className="card-hdr">
-              <div
-                className="card-title"
-                style={{ color: "var(--text-primary)" }}
-              >
-                Line Items
-              </div>
-            </div>
-            <div className="tbl-wrap">
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>SKU</th>
-                    <th>Qty</th>
-                    <th>Unit Price</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoice.items?.map((item) => (
-                    <tr key={item._id}>
-                      <td style={{ color: "var(--text-primary)" }}>
-                        {item.product_name_snapshot ?? "—"}
-                      </td>
-                      <td style={{ color: "var(--electric-bright)" }}>
-                        {item.sku_snapshot ?? "—"}
-                      </td>
-                      <td>{item.quantity}</td>
-                      <td>PKR {item.unit_price_snapshot?.toLocaleString()}</td>
-                      <td
-                        className="font-inter font-semibold"
-                        style={{ color: "var(--electric-bright)" }}
-                      >
-                        PKR {item.line_total?.toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {/* Totals */}
-            <div
-              className="flex justify-end gap-[22px] p-[13px_17px]"
-              style={{ borderTop: "1px solid var(--border)" }}
-            >
-              {invoice.discount > 0 && (
-                <div className="text-right">
+              {showDiscountEditor && (
+                <div className="pt-1">
                   <div
-                    className="text-[10px] uppercase tracking-[.1em] mb-[4px] font-inter"
+                    className="text-[10px] uppercase tracking-[.1em] mb-[8px] font-inter"
                     style={{ color: "var(--text-secondary)" }}
                   >
                     Discount
                   </div>
-                  <div
-                    className="font-inter font-semibold text-[14px]"
-                    style={{ color: "#ff4d6a" }}
-                  >
-                    - PKR {invoice.discount?.toLocaleString()}
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="btn"
+                      style={{
+                        background:
+                          discountType === "PKR"
+                            ? "var(--electric)"
+                            : "var(--bg-input)",
+                        color:
+                          discountType === "PKR"
+                            ? "#fff"
+                            : "var(--text-secondary)",
+                        border: "1px solid var(--border)",
+                        minWidth: 62,
+                        height: 36,
+                        padding: "0 12px",
+                      }}
+                      onClick={() => setDiscountType("PKR")}
+                    >
+                      PKR
+                    </button>
+                    <button
+                      className="btn"
+                      style={{
+                        background:
+                          discountType === "PERCENT"
+                            ? "var(--electric)"
+                            : "var(--bg-input)",
+                        color:
+                          discountType === "PERCENT"
+                            ? "#fff"
+                            : "var(--text-secondary)",
+                        border: "1px solid var(--border)",
+                        minWidth: 46,
+                        height: 36,
+                        padding: "0 12px",
+                      }}
+                      onClick={() => setDiscountType("PERCENT")}
+                    >
+                      %
+                    </button>
+                    <input
+                      className="fi"
+                      type="text"
+                      inputMode="decimal"
+                      value={discountInput}
+                      placeholder={
+                        discountType === "PERCENT"
+                          ? "Enter discount %"
+                          : "Enter discount amount"
+                      }
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (
+                          next === "" ||
+                          /^(\d+\.?\d{0,2}|\d*\.\d{1,2})$/.test(next)
+                        ) {
+                          setDiscountInput(next);
+                          setDiscountValue(next === "" ? 0 : Number(next));
+                        }
+                      }}
+                    />
                   </div>
+
+                  {computedDiscount > 0 && (
+                    <div className="flex items-center justify-between mt-[8px] text-[13px]">
+                      <span style={{ color: "var(--text-secondary)" }}>
+                        Applied
+                      </span>
+                      <span style={{ color: "#ff4d6a" }}>
+                        -{" "}
+                        {discountType === "PERCENT"
+                          ? `${discountValue}%`
+                          : "PKR"}{" "}
+                        {discountType === "PERCENT"
+                          ? `PKR ${computedDiscount.toLocaleString()}`
+                          : computedDiscount.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
-              <div
-                className="text-right pl-[22px]"
-                style={{ borderLeft: "1px solid var(--border)" }}
-              >
-                <div
-                  className="text-[10px] uppercase tracking-[.1em] mb-[4px] font-inter"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Grand Total
-                </div>
-                <div
-                  className="font-inter font-extrabold text-[19px]"
-                  style={{ color: "var(--electric-bright)" }}
-                >
-                  PKR {invoice.total_amount?.toLocaleString()}
-                </div>
-              </div>
             </div>
-          </div>
 
-          {/* Payment History */}
-          <div className="card">
-            <div className="card-hdr">
-              <div
-                className="card-title"
+            <div
+              className="h-[1px] my-[12px]"
+              style={{ background: "var(--border)" }}
+            />
+
+            <div className="flex items-center justify-between gap-[10px] flex-wrap">
+              <span
+                className="font-inter font-bold text-[17px] leading-[1.15]"
                 style={{ color: "var(--text-primary)" }}
               >
-                Payment History
-              </div>
-              {invoice.status !== "completed" && (
+                Total
+              </span>
+              <div className="flex items-center gap-[8px]">
+                <span
+                  className="font-inter font-extrabold text-[22px] leading-[1.1]"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  PKR{" "}
+                  {(showDiscountEditor
+                    ? totals.subtotal - computedDiscount
+                    : totals.total
+                  ).toLocaleString()}
+                </span>
                 <button
                   className="btn btn-ghost"
-                  style={{ padding: "5px 11px", fontSize: "11px" }}
-                  onClick={() => setPaymentModal(true)}
+                  onClick={() => {
+                    if (!showDiscountEditor) {
+                      setDiscountType("PKR");
+                      setDiscountValue(0);
+                      setDiscountInput("");
+                      setShowDiscountEditor(true);
+                      return;
+                    }
+                    void handleUpdateDiscount();
+                  }}
+                  disabled={discountSaving}
+                  style={{ fontSize: "12px", padding: "6px 10px" }}
                 >
-                  + Add Payment
+                  {discountSaving
+                    ? "Saving..."
+                    : showDiscountEditor
+                      ? "Save Discount"
+                      : "Add Discount"}
                 </button>
-              )}
+                {showDiscountEditor && (
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setDiscountType("PKR");
+                      setDiscountValue(invoice.discount ?? 0);
+                      setDiscountInput("");
+                      setShowDiscountEditor(false);
+                    }}
+                    disabled={discountSaving}
+                    style={{ fontSize: "12px", padding: "6px 10px" }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
-            {payments.length === 0 ? (
+
+            <div
+              className="h-[1px] my-[12px]"
+              style={{ background: "var(--border)" }}
+            />
+
+            <button
+              className="btn btn-ghost w-full justify-start"
+              onClick={handleExportPdf}
+            >
+              Export PDF
+            </button>
+          </div>
+
+          <div
+            className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            LINE ITEMS
+          </div>
+
+          <div className="card p-0 overflow-hidden">
+            {invoice.items?.length ? (
+              invoice.items.map((item, idx) => (
+                <div
+                  key={item._id || `${item.sku_snapshot}-${idx}`}
+                  className="flex items-start justify-between gap-[10px] p-[14px]"
+                  style={{
+                    borderBottom:
+                      idx < invoice.items.length - 1
+                        ? "1px solid var(--border)"
+                        : "none",
+                  }}
+                >
+                  <div>
+                    <div
+                      className="font-inter font-semibold text-[15px] leading-[1.25]"
+                      style={{ color: "var(--text-primary)" }}
+                    >
+                      {item.product_name_snapshot}
+                    </div>
+                    <div
+                      className="text-[12px] mt-[4px] font-medium"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      {item.quantity} × PKR{" "}
+                      {item.unit_price_snapshot.toLocaleString()} ·{" "}
+                      {item.box_qty ?? "—"} boxes
+                    </div>
+                  </div>
+                  <div
+                    className="font-inter font-bold text-[16px] leading-[1.2]"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    PKR {item.line_total.toLocaleString()}
+                  </div>
+                </div>
+              ))
+            ) : (
               <div
-                className="text-center py-8 text-[12px]"
+                className="text-center py-8"
                 style={{ color: "var(--text-muted)" }}
               >
-                No payments recorded yet
-              </div>
-            ) : (
-              <div className="tbl-wrap">
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Amount</th>
-                      <th>Method</th>
-                      <th>Reference</th>
-                      <th>Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payments.map((p) => (
-                      <tr key={p._id}>
-                        <td style={{ color: "var(--text-secondary)" }}>
-                          {formatDate(p.payment_date)}
-                        </td>
-                        <td
-                          className="font-inter font-bold"
-                          style={{ color: "#00c97a" }}
-                        >
-                          + PKR {p.amount?.toLocaleString()}
-                        </td>
-                        <td>
-                          <span className="badge badge-paid">{p.method}</span>
-                        </td>
-                        <td style={{ color: "var(--text-secondary)" }}>
-                          {p.reference ?? "—"}
-                        </td>
-                        <td style={{ color: "var(--text-secondary)" }}>
-                          {p.notes ?? "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                No items found
               </div>
             )}
           </div>
-        </div>
 
-        {/* RIGHT */}
-        <div className="flex flex-col gap-[14px]">
-          {/* Payment Summary */}
-          <div className="card">
-            <div className="card-hdr">
-              <div
-                className="card-title"
-                style={{ color: "var(--text-primary)" }}
-              >
-                Payment Summary
-              </div>
-            </div>
-            <div className="p-[15px_17px] flex flex-col gap-[12px]">
-              <div className="flex justify-between items-center">
-                <span
-                  className="text-[12px]"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Total Amount
-                </span>
-                <span
-                  className="font-inter font-bold text-[13px]"
-                  style={{ color: "var(--text-primary)" }}
-                >
-                  PKR {invoice.total_amount?.toLocaleString()}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span
-                  className="text-[12px]"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Paid Amount
-                </span>
-                <span
-                  className="font-inter font-bold text-[13px]"
-                  style={{ color: "#00c97a" }}
-                >
-                  PKR {invoice.paid_amount?.toLocaleString()}
-                </span>
-              </div>
-              <div
-                className="flex justify-between items-center pt-[10px]"
-                style={{ borderTop: "1px solid var(--border)" }}
-              >
-                <span
-                  className="text-[12px] font-inter font-semibold"
-                  style={{ color: "var(--text-primary)" }}
-                >
-                  Remaining
-                </span>
-                <span
-                  className="font-inter font-extrabold text-[16px]"
-                  style={{
-                    color:
-                      invoice.status === "completed"
-                        ? "#00c97a"
-                        : invoice.status === "partial"
-                          ? "#ffb020"
-                          : "#ff4d6a",
-                  }}
-                >
-                  PKR {invoice.remaining_amount?.toLocaleString()}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Notes */}
-          {invoice.notes && (
-            <div className="card">
-              <div className="card-hdr">
-                <div className="card-title">Notes</div>
-              </div>
-              <div
-                className="p-[15px_17px] text-[13px]"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {invoice.notes}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Add Payment Modal */}
-      <Modal
-        isOpen={paymentModal}
-        onClose={() => {
-          setPaymentModal(false);
-          setPaymentError("");
-          setPaymentAmount("");
-        }}
-        title="Add Payment"
-      >
-        <div className="p-[20px] flex flex-col gap-[13px]">
-          {paymentError && (
-            <div
-              className="p-[10px_13px] rounded-lg text-[12px] font-inter"
-              style={{
-                background: "rgba(255,77,106,.1)",
-                border: "1px solid rgba(255,77,106,.2)",
-                color: "#ff4d6a",
-              }}
-            >
-              {paymentError}
-            </div>
-          )}
-
-          {/* Remaining balance info */}
           <div
-            className="p-[11px] rounded-lg"
-            style={{
-              background: "var(--electric-glow)",
-              border: "1px solid var(--border)",
-            }}
+            className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]"
+            style={{ color: "var(--text-secondary)" }}
           >
+            ADD ITEMS
+          </div>
+
+          <div className="card p-[12px]" style={{ overflow: "visible" }}>
             <div
-              className="text-[10px] uppercase tracking-[.1em] mb-[4px] font-inter"
-              style={{ color: "var(--text-secondary)" }}
+              className="rounded-xl p-[13px] relative z-[30] flex flex-col gap-[10px]"
+              style={{ border: "1px solid var(--border)" }}
             >
-              Remaining Balance
+              <div className="relative">
+                <input
+                  className="fi pr-10"
+                  placeholder="Search item"
+                  value={itemQuery}
+                  onFocus={() => setShowItemResults(true)}
+                  onChange={(e) => {
+                    setItemQuery(e.target.value);
+                    setSelectedProduct(null);
+                    setShowItemResults(true);
+                  }}
+                  style={{
+                    borderColor: selectedProduct
+                      ? "rgba(0,201,122,.45)"
+                      : "var(--border-input)",
+                  }}
+                />
+
+                {(itemQuery || selectedProduct) && (
+                  <button
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
+                    style={{
+                      background: "rgba(255,77,106,.18)",
+                      border: "none",
+                      color: "#ff4d6a",
+                      cursor: "pointer",
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setItemQuery("");
+                      setSelectedProduct(null);
+                      setShowItemResults(false);
+                    }}
+                    aria-label="Clear selected item"
+                  >
+                    ✕
+                  </button>
+                )}
+
+                {showItemResults && (
+                  <div
+                    className="absolute left-0 right-0 mt-1 rounded-lg overflow-hidden"
+                    style={{
+                      background: "var(--bg-card)",
+                      border: "1px solid var(--border)",
+                      zIndex: 40,
+                      maxHeight: 220,
+                      overflowY: "auto",
+                      paddingBottom: 4,
+                    }}
+                  >
+                    {itemLoading ? (
+                      <div
+                        className="px-3 py-3 text-[12px]"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
+                        Searching...
+                      </div>
+                    ) : itemResults.length === 0 ? (
+                      <div
+                        className="px-3 py-3 text-[12px]"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
+                        No items found
+                      </div>
+                    ) : (
+                      itemResults.map((p) => (
+                        <button
+                          key={p._id}
+                          className="w-full text-left px-3 py-3 transition-colors"
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            borderBottom: "1px solid var(--border)",
+                            cursor: "pointer",
+                            color: "var(--text-primary)",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background =
+                              "var(--electric-glow)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "transparent";
+                          }}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectProduct(p);
+                          }}
+                        >
+                          <div className="text-[13px] font-semibold">
+                            {p.name}
+                          </div>
+                          <div
+                            className="text-[11px]"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {p.sku} ·{" "}
+                            {(p.model || "NO MODEL").replace(/_/g, " ")} · PKR{" "}
+                            {p.price.toLocaleString()}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-[10px]">
+                <div>
+                  <div
+                    className="text-[11px] uppercase tracking-[.08em] mb-2"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Qty
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => setDraftQty((q) => Math.max(1, q - 1))}
+                    >
+                      −
+                    </button>
+                    <div
+                      className="fi flex-1 flex items-center justify-center font-inter font-semibold"
+                      style={{ minHeight: 40 }}
+                    >
+                      {draftQty}
+                    </div>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => setDraftQty((q) => q + 1)}
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    className="block text-[11px] uppercase tracking-[.08em] mb-2"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Box Qty
+                  </label>
+                  <input
+                    className="fi"
+                    type="number"
+                    min={0}
+                    placeholder="Optional"
+                    value={draftBoxQty}
+                    onChange={(e) => setDraftBoxQty(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-[10px]">
+                <div>
+                  <div
+                    className="text-[11px] uppercase tracking-[.08em] mb-2"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Price
+                  </div>
+                  <div className="fi font-inter font-semibold">
+                    PKR {selectedProduct?.price?.toLocaleString() ?? 0}
+                  </div>
+                </div>
+                <div>
+                  <div
+                    className="text-[11px] uppercase tracking-[.08em] mb-2"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Total
+                  </div>
+                  <div className="fi font-inter font-semibold">
+                    PKR{" "}
+                    {(
+                      (selectedProduct?.price ?? 0) * draftQty
+                    ).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                className="btn btn-primary w-full justify-center"
+                onClick={handleAppendItem}
+                disabled={!selectedProduct || appendLoading}
+                style={{ opacity: !selectedProduct || appendLoading ? 0.7 : 1 }}
+              >
+                {appendLoading ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  "+ Add Item to List"
+                )}
+              </button>
             </div>
-            <div
-              className="font-inter font-extrabold text-[18px]"
-              style={{ color: "#ffb020" }}
-            >
-              PKR {invoice.remaining_amount?.toLocaleString()}
+
+            {showItemResults && (
+              <div
+                className="fixed inset-0 z-[20]"
+                style={{
+                  background: "rgba(0,0,0,0.35)",
+                  backdropFilter: "blur(4px)",
+                }}
+                onClick={() => setShowItemResults(false)}
+              />
+            )}
+          </div>
+
+          <div
+            className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            NOTES
+          </div>
+
+          <div className="card p-[14px]">
+            <div style={{ color: "var(--text-secondary)" }}>
+              {invoice.notes?.trim() || "No notes"}
             </div>
-          </div>
-
-          {/* Date */}
-          <div>
-            <label
-              className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Payment Date
-            </label>
-            <input
-              className="fi"
-              type="date"
-              value={paymentDate}
-              onChange={(e) => setPaymentDate(e.target.value)}
-            />
-          </div>
-
-          {/* Amount */}
-          <div>
-            <label
-              className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Amount (PKR)
-            </label>
-            <input
-              className="fi"
-              type="number"
-              placeholder="0"
-              value={paymentAmount}
-              onChange={(e) => setPaymentAmount(e.target.value)}
-            />
-          </div>
-
-          {/* Method */}
-          <div>
-            <label
-              className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Payment Method
-            </label>
-            <select
-              className="fi"
-              value={paymentMethod}
-              onChange={(e) =>
-                setPaymentMethod(e.target.value as "CASH" | "BANK" | "OTHER")
-              }
-            >
-              <option value="CASH">Cash</option>
-              <option value="BANK">Bank Transfer</option>
-              <option value="OTHER">Other</option>
-            </select>
-          </div>
-
-          {/* Reference */}
-          <div>
-            <label
-              className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Reference (Optional)
-            </label>
-            <input
-              className="fi"
-              placeholder="e.g. TRX-123"
-              value={paymentReference}
-              onChange={(e) => setPaymentReference(e.target.value)}
-            />
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label
-              className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Notes (Optional)
-            </label>
-            <input
-              className="fi"
-              placeholder="Any notes..."
-              value={paymentNotes}
-              onChange={(e) => setPaymentNotes(e.target.value)}
-            />
-          </div>
-
-          {/* Buttons */}
-          <div className="flex gap-[9px] justify-end pt-[4px]">
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                setPaymentModal(false);
-                setPaymentError("");
-                setPaymentAmount("");
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={handleAddPayment}
-              disabled={paymentLoading}
-              style={{ opacity: paymentLoading ? 0.7 : 1 }}
-            >
-              {paymentLoading ? (
-                <>
-                  <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                "Add Payment"
-              )}
-            </button>
           </div>
         </div>
-      </Modal>
+      )}
     </div>
   );
 }

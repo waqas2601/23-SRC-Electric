@@ -47,10 +47,15 @@ function CustomerSearch({
 
   // Search customers whenever query changes
   useEffect(() => {
+    if (!token) {
+      setResults([]);
+      return;
+    }
+
     const timeout = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const data = await getCustomersAPI(token!, {
+        const data = await getCustomersAPI(token, {
           q: query || undefined,
           limit: 10,
         });
@@ -76,7 +81,6 @@ function CustomerSearch({
   };
 
   const handleSelect = (customer: Customer) => {
-    console.log("Selected:", customer);
     justSelectedRef.current = true;
     onSelect(customer);
     setIsOpen(false);

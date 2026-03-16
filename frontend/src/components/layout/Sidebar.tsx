@@ -1,5 +1,7 @@
+import { useCallback, useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { getInvoicesAPI } from "../../api/invoices";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -7,8 +9,34 @@ interface SidebarProps {
 }
 
 function Sidebar({ isOpen, onClose }: SidebarProps) {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const navigate = useNavigate();
+  const [invoiceNotificationCount, setInvoiceNotificationCount] =
+    useState<number>(0);
+
+  const fetchInvoiceNotificationCount = useCallback(async () => {
+    if (!token) {
+      setInvoiceNotificationCount(0);
+      return;
+    }
+
+    try {
+      const [unpaid, partial] = await Promise.all([
+        getInvoicesAPI(token, { status: "unpaid", page: 1, limit: 1 }),
+        getInvoicesAPI(token, { status: "partial", page: 1, limit: 1 }),
+      ]);
+
+      const unpaidTotal = unpaid?.pagination?.total ?? 0;
+      const partialTotal = partial?.pagination?.total ?? 0;
+      setInvoiceNotificationCount(unpaidTotal + partialTotal);
+    } catch {
+      setInvoiceNotificationCount(0);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchInvoiceNotificationCount();
+  }, [fetchInvoiceNotificationCount]);
 
   const handleLogout = () => {
     logout();
@@ -222,12 +250,14 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
                 <line x1="16" y1="17" x2="8" y2="17" />
               </svg>
               Invoices
-              <span
-                className="ml-auto font-inter font-bold text-[9px] px-[6px] py-[1px] rounded-[20px]"
-                style={{ background: "#ff4d6a", color: "#fff" }}
-              >
-                3
-              </span>
+              {invoiceNotificationCount > 0 && (
+                <span
+                  className="ml-auto font-inter font-bold text-[9px] px-[6px] py-[1px] rounded-[20px]"
+                  style={{ background: "#ff4d6a", color: "#fff" }}
+                >
+                  {invoiceNotificationCount}
+                </span>
+              )}
             </>
           )}
         </NavLink>
@@ -265,6 +295,44 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
                 <line x1="1" y1="10" x2="23" y2="10" />
               </svg>
               Payments
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/ledger"
+          onClick={onClose}
+          className={({ isActive }) =>
+            `flex items-center gap-[10px] px-[11px] py-[9px] rounded-lg cursor-pointer text-[13px] mb-[2px] transition-all duration-[180ms] border relative no-underline ${isActive ? "nav-active" : "nav-inactive"}`
+          }
+          style={({ isActive }) => ({
+            background: isActive ? "var(--electric-glow)" : "transparent",
+            color: isActive
+              ? "var(--electric-bright)"
+              : "var(--text-secondary)",
+            borderColor: isActive ? "rgba(26,110,255,.3)" : "transparent",
+          })}
+        >
+          {({ isActive }) => (
+            <>
+              {isActive && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[18px] rounded-r-sm"
+                  style={{ background: "#e8141c" }}
+                />
+              )}
+              <svg
+                className="w-4 h-4 opacity-80 flex-shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M3 5h18" />
+                <path d="M3 12h18" />
+                <path d="M3 19h18" />
+              </svg>
+              Ledger
             </>
           )}
         </NavLink>

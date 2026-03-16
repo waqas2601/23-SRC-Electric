@@ -4,6 +4,7 @@ import Badge from "../components/ui/Badge";
 import Chip from "../components/ui/Chip";
 import { useAuth } from "../context/AuthContext";
 import { getInvoicesAPI, deleteInvoiceAPI } from "../api/invoices";
+import { useToast } from "../context/ToastContext";
 
 interface Invoice {
   _id: string;
@@ -50,6 +51,7 @@ function formatDate(dateStr: string) {
 
 function Invoices() {
   const { token } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,38 +61,59 @@ function Invoices() {
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const fetchInvoices = useCallback(async () => {
+    if (!token) {
+      setInvoices([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
-      const data = await getInvoicesAPI(token!, {
+      const data = await getInvoicesAPI(token, {
         status: activeFilter || undefined,
         limit: 50,
       });
       setInvoices(data.items ?? []);
     } catch (err: any) {
-      setError(err.message || "Failed to load invoices");
+      const message = err.message || "Failed to load invoices";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsLoading(false);
     }
-  }, [token, activeFilter]);
+  }, [token, activeFilter, showToast]);
 
   useEffect(() => {
     fetchInvoices();
   }, [fetchInvoices]);
 
   const handleDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteId || !token) return;
     setDeleteLoading(true);
     try {
-      await deleteInvoiceAPI(token!, deleteId);
+      await deleteInvoiceAPI(token, deleteId);
       setDeleteId(null);
-      fetchInvoices();
+      await fetchInvoices();
+      showToast("success", "Invoice deleted successfully");
     } catch (err: any) {
-      alert(err.message || "Failed to delete invoice");
+      showToast("error", err.message || "Failed to delete invoice");
     } finally {
       setDeleteLoading(false);
     }
   };
+
+  const stats = invoices.reduce(
+    (acc, inv) => {
+      acc.total += 1;
+      acc.amount += inv.total_amount;
+      if (inv.status === "completed") acc.paid += 1;
+      else if (inv.status === "partial") acc.partial += 1;
+      else acc.unpaid += 1;
+      return acc;
+    },
+    { total: 0, paid: 0, partial: 0, unpaid: 0, amount: 0 },
+  );
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
@@ -147,10 +170,189 @@ function Invoices() {
         </div>
       )}
 
-      {/* Table */}
-      <div className="card">
+      {/* Snapshot */}
+      {!isLoading && invoices.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-[10px] mb-[14px]">
+          <div className="card p-[10px_12px]">
+            <div
+              className="text-[10px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Total
+            </div>
+            <div
+              className="font-inter font-bold text-[16px]"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {stats.total}
+            </div>
+          </div>
+          <div className="card p-[10px_12px]">
+            <div
+              className="text-[10px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Paid
+            </div>
+            <div
+              className="font-inter font-bold text-[16px]"
+              style={{ color: "#00c97a" }}
+            >
+              {stats.paid}
+            </div>
+          </div>
+          <div className="card p-[10px_12px]">
+            <div
+              className="text-[10px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Partial
+            </div>
+            <div
+              className="font-inter font-bold text-[16px]"
+              style={{ color: "#ffb020" }}
+            >
+              {stats.partial}
+            </div>
+          </div>
+          <div className="card p-[10px_12px]">
+            <div
+              className="text-[10px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Unpaid
+            </div>
+            <div
+              className="font-inter font-bold text-[16px]"
+              style={{ color: "#ff4d6a" }}
+            >
+              {stats.unpaid}
+            </div>
+          </div>
+          <div className="card p-[10px_12px] col-span-2 lg:col-span-1">
+            <div
+              className="text-[10px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Amount
+            </div>
+            <div
+              className="font-inter font-bold text-[16px]"
+              style={{ color: "var(--text-primary)" }}
+            >
+              PKR {stats.amount.toLocaleString()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Cards */}
+      <div className="md:hidden flex flex-col gap-[10px]">
+        {isLoading ? (
+          <div
+            className="card p-6 text-center"
+            style={{ color: "var(--text-muted)" }}
+          >
+            Loading...
+          </div>
+        ) : invoices.length === 0 ? (
+          <div
+            className="card p-6 text-center"
+            style={{ color: "var(--text-muted)" }}
+          >
+            No invoices found
+          </div>
+        ) : (
+          invoices.map((inv) => (
+            <div key={inv._id} className="card p-[14px]">
+              <div className="flex items-start justify-between gap-3 mb-[10px]">
+                <div>
+                  <div
+                    className="font-inter font-extrabold text-[17px]"
+                    style={{ color: "var(--electric-bright)" }}
+                  >
+                    #{inv.invoice_no}
+                  </div>
+                  <div
+                    className="text-[12px] font-semibold truncate max-w-[180px]"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    {inv.customer_id?.name ?? "—"}
+                  </div>
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    {formatDate(inv.invoice_date)}
+                  </div>
+                </div>
+                <Badge status={statusMap[inv.status]} />
+              </div>
+
+              <div
+                className="grid grid-cols-3 gap-2 text-[11px] p-[10px] rounded-lg"
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-input)",
+                }}
+              >
+                <div>
+                  <div style={{ color: "var(--text-secondary)" }}>Total</div>
+                  <div className="font-semibold">
+                    PKR {inv.total_amount.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-secondary)" }}>Paid</div>
+                  <div className="font-semibold" style={{ color: "#00c97a" }}>
+                    PKR {inv.paid_amount.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-secondary)" }}>Remain</div>
+                  <div
+                    className="font-semibold"
+                    style={{ color: remainingColor[inv.status] }}
+                  >
+                    PKR {inv.remaining_amount.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-[8px] mt-[10px]">
+                <button
+                  className="btn btn-ghost flex-1 justify-center"
+                  onClick={() => navigate(`/invoices/${inv._id}`)}
+                >
+                  View
+                </button>
+                <button
+                  className="flex-1"
+                  style={{
+                    padding: "9px 12px",
+                    fontSize: "12px",
+                    background: "rgba(255,77,106,.1)",
+                    border: "1px solid rgba(255,77,106,.2)",
+                    color: "#ff4d6a",
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    fontFamily: "Inter",
+                    fontWeight: 600,
+                  }}
+                  onClick={() => setDeleteId(inv._id)}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Desktop Table */}
+      <div className="card hidden md:block">
         <div className="tbl-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-invoices">
             <thead>
               <tr>
                 <th>Invoice #</th>
@@ -195,14 +397,14 @@ function Invoices() {
                 invoices.map((inv) => (
                   <tr key={inv._id}>
                     <td style={{ color: "var(--electric-bright)" }}>
-                      {inv.invoice_no}
+                      #{inv.invoice_no}
                     </td>
                     <td>
-                      <div className="font-medium">
+                      <div className="font-medium truncate max-w-[220px]">
                         {inv.customer_id?.name ?? "—"}
                       </div>
                       <div
-                        className="text-[10px]"
+                        className="text-[10px] truncate max-w-[220px]"
                         style={{ color: "var(--text-secondary)" }}
                       >
                         {inv.customer_id?.shop_name ?? ""}
@@ -227,7 +429,7 @@ function Invoices() {
                       <Badge status={statusMap[inv.status]} />
                     </td>
                     <td>
-                      <div className="flex items-center gap-[6px]">
+                      <div className="flex items-center gap-[6px] whitespace-nowrap">
                         <button
                           className="btn btn-ghost"
                           style={{ padding: "4px 10px", fontSize: "11px" }}

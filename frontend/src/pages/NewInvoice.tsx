@@ -1,93 +1,76 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { addInvoiceAPI } from "../api/invoices";
 import { getProductsAPI } from "../api/products";
-import { getCustomersAPI } from "../api/customers";
-import { addInvoiceAPI, addPaymentToInvoiceAPI } from "../api/invoices";
 import Avatar from "../components/ui/Avatar";
-import CustomerSearch from "../components/ui/CustomerSeacrh";
+import CustomerSearch from "../components/ui/CustomerSearch";
 import { addCustomerAPI } from "../api/customers";
-import ProductSearch from "../components/ui/ProductSearch";
-
-interface Product {
-  _id: string;
-  name: string;
-  price: number;
-  sku: string;
-}
-
-interface Customer {
-  _id: string;
-  name: string;
-  shop_name?: string;
-  phone?: string;
-}
+import { useToast } from "../context/ToastContext";
+import type { Product } from "../api/products";
 
 interface LineItem {
   productId: string;
   productName: string;
+  productModel: string | null;
   quantity: number;
   unitPriceSnapshot: number;
+  boxQty: number | null;
 }
 
 const GRADIENTS = ["default", "cyan", "green", "purple", "red"];
 
+function mixProductsByModel(items: Product[]) {
+  const order = ["A_SERIES", "K_SERIES", "R_SERIES", "UNIQUE_SERIES"];
+  const buckets = new Map<string, Product[]>();
+
+  order.forEach((key) => buckets.set(key, []));
+  items.forEach((item) => {
+    const key = String(item.model || "").toUpperCase();
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(item);
+  });
+
+  const mixed: Product[] = [];
+  let hasMore = true;
+  while (hasMore) {
+    hasMore = false;
+    for (const key of [...order, ...Array.from(buckets.keys())]) {
+      const bucket = buckets.get(key) ?? [];
+      if (bucket.length > 0) {
+        mixed.push(bucket.shift()!);
+        hasMore = true;
+      }
+    }
+  }
+
+  return mixed;
+}
+
 function NewInvoice() {
   const { token } = useAuth();
   const navigate = useNavigate();
+  const { showToast } = useToast();
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(
     new Date().toISOString().split("T")[0],
   );
-  const [discount, setDiscount] = useState(0);
+  const [discountType, setDiscountType] = useState<"PKR" | "PERCENT">("PKR");
+  const [discountValue, setDiscountValue] = useState(0);
+  const [discountInput, setDiscountInput] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<LineItem[]>([]);
+  const [itemQuery, setItemQuery] = useState("");
+  const [itemResults, setItemResults] = useState<Product[]>([]);
+  const [itemLoading, setItemLoading] = useState(false);
+  const [showItemResults, setShowItemResults] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [draftQty, setDraftQty] = useState(1);
+  const [draftBoxQty, setDraftBoxQty] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isFetching, setIsFetching] = useState(true);
   const [error, setError] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState<
-    "unpaid" | "partial" | "paid"
-  >("unpaid");
-  const [paymentAmount, setPaymentAmount] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK" | "OTHER">(
-    "CASH",
-  );
-  const [paymentReference, setPaymentReference] = useState("");
-  const [paymentNotes, setPaymentNotes] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
-
-  // Fetch products and customers on load
-  useEffect(() => {
-    const fetchData = async () => {
-      setIsFetching(true);
-      try {
-        const prodData = await getProductsAPI(token!, {
-          limit: 100,
-          isActive: true,
-        });
-        const productList = prodData.items ?? [];
-        setProducts(productList);
-        if (productList.length > 0) {
-          setItems([
-            {
-              productId: productList[0]._id,
-              productName: productList[0].name,
-              quantity: 1,
-              unitPriceSnapshot: productList[0].price,
-            },
-          ]);
-        }
-      } catch (err: any) {
-        setError("Failed to load products");
-      } finally {
-        setIsFetching(false);
-      }
-    };
-    fetchData();
-  }, [token]);
 
   const [selectedCustomer, setSelectedCustomer] = useState<{
     _id: string;
@@ -95,21 +78,128 @@ function NewInvoice() {
     shop_name?: string;
     phone?: string;
   } | null>(null);
-  const gradientIndex = customers.findIndex(
-    (c) => c._id === selectedCustomerId,
-  );
-
-  const removeItem = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-  };
+  const gradientIndex = useMemo(() => {
+    const name = selectedCustomer?.name ?? "";
+    if (!name) return 0;
+    return (
+      name.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) %
+      GRADIENTS.length
+    );
+  }, [selectedCustomer]);
 
   const subtotal = items.reduce(
     (sum, item) => sum + item.quantity * item.unitPriceSnapshot,
     0,
   );
-  const grandTotal = subtotal - discount;
+  const discount = Math.max(
+    0,
+    Math.round(
+      discountType === "PKR"
+        ? discountValue
+        : (subtotal * Math.max(0, discountValue)) / 100,
+    ),
+  );
+  const grandTotal = Math.max(0, subtotal - discount);
+
+  useEffect(() => {
+    if (!token) {
+      setItemResults([]);
+      return;
+    }
+
+    const q = itemQuery.trim();
+    const timeout = setTimeout(async () => {
+      setItemLoading(true);
+      try {
+        const data = await getProductsAPI(token, {
+          q: q || undefined,
+          isActive: true,
+          limit: q ? 8 : 50,
+        });
+        const items = (data.items ?? []) as Product[];
+        setItemResults(q ? items : mixProductsByModel(items).slice(0, 20));
+      } catch {
+        setItemResults([]);
+      } finally {
+        setItemLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [itemQuery, token]);
+
+  const upsertProductItem = (
+    product: Product,
+    qty: number,
+    boxQty: number | null,
+  ) => {
+    setItems((prev) => {
+      const existingIndex = prev.findIndex((i) => i.productId === product._id);
+      if (existingIndex >= 0) {
+        return prev.map((item, idx) =>
+          idx === existingIndex
+            ? {
+                ...item,
+                quantity: item.quantity + qty,
+                boxQty:
+                  boxQty === null
+                    ? (item.boxQty ?? null)
+                    : (item.boxQty ?? 0) + boxQty,
+              }
+            : item,
+        );
+      }
+      return [
+        ...prev,
+        {
+          productId: product._id,
+          productName: product.name,
+          productModel: product.model ?? null,
+          quantity: qty,
+          unitPriceSnapshot: product.price,
+          boxQty,
+        },
+      ];
+    });
+  };
+
+  const handleSelectProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setItemQuery(product.name);
+    setShowItemResults(false);
+    setDraftQty(1);
+    setDraftBoxQty("");
+  };
+
+  const handleAddItem = () => {
+    if (!selectedProduct) {
+      setError("Please select an item first");
+      return;
+    }
+
+    const parsed = draftBoxQty.trim();
+    if (parsed !== "" && Number.isNaN(Number(parsed))) {
+      setError("Box quantity must be a valid number");
+      return;
+    }
+
+    const boxQty = parsed === "" ? null : Math.max(0, Number(parsed));
+    upsertProductItem(selectedProduct, draftQty, boxQty);
+
+    setError("");
+    setSelectedProduct(null);
+    setItemQuery("");
+    setDraftQty(1);
+    setDraftBoxQty("");
+    setShowItemResults(false);
+  };
 
   const handleSubmit = async () => {
+    if (!token) {
+      setError("Session expired. Please login again.");
+      return;
+    }
+
     if (!selectedCustomerId && !newCustomerName?.trim()) {
       setError("Please select or enter a customer name");
       return;
@@ -118,10 +208,30 @@ function NewInvoice() {
       setError("Please add at least one item");
       return;
     }
-    if (paymentStatus !== "unpaid" && paymentAmount <= 0) {
-      setError("Please enter payment amount");
+
+    if (discountValue < 0) {
+      setError("Discount cannot be negative");
       return;
     }
+
+    if (discountType === "PERCENT" && discountValue > 100) {
+      setError("Discount percentage cannot exceed 100%");
+      return;
+    }
+
+    if (discount > subtotal) {
+      setError("Discount cannot be greater than subtotal");
+      return;
+    }
+
+    const invalidItem = items.find(
+      (item) => item.quantity < 1 || item.unitPriceSnapshot < 0,
+    );
+    if (invalidItem) {
+      setError("Please provide valid quantity and price for all items");
+      return;
+    }
+
     setError("");
     setIsLoading(true);
     try {
@@ -129,13 +239,13 @@ function NewInvoice() {
 
       // Create new customer if name was typed manually
       if (!customerId && newCustomerName?.trim()) {
-        const newCust = await addCustomerAPI(token!, {
+        const newCust = await addCustomerAPI(token, {
           name: newCustomerName.trim(),
         });
         customerId = newCust.customer?._id ?? newCust._id;
       }
 
-      const inv = await addInvoiceAPI(token!, {
+      await addInvoiceAPI(token, {
         customerId,
         invoiceDate,
         discount,
@@ -144,38 +254,19 @@ function NewInvoice() {
           productId: item.productId,
           quantity: item.quantity,
           unitPriceSnapshot: item.unitPriceSnapshot,
+          ...(item.boxQty !== null ? { boxQty: item.boxQty } : {}),
         })),
       });
-
-      // Add payment if provided
-      if (paymentStatus !== "unpaid" && paymentAmount > 0) {
-        const invoiceId = inv.invoice?._id ?? inv._id;
-        await addPaymentToInvoiceAPI(token!, invoiceId, {
-          paymentDate: invoiceDate,
-          amount: paymentAmount,
-          method: paymentMethod,
-          reference: paymentReference || undefined,
-          notes: paymentNotes || undefined,
-        });
-      }
-
+      showToast("success", "Invoice created successfully");
       navigate("/invoices");
     } catch (err: any) {
-      setError(err.message || "Failed to create invoice");
+      const message = err.message || "Failed to create invoice";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsLoading(false);
     }
   };
-  if (isFetching) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div
-          className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin"
-          style={{ borderColor: "#e8141c", borderTopColor: "transparent" }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
@@ -231,9 +322,14 @@ function NewInvoice() {
         {/* LEFT */}
         <div className="flex flex-col gap-[14px]">
           {/* Invoice Details */}
-          <div className="card">
+          <div className="card overflow-visible">
             <div className="card-hdr">
-              <div className="card-title">Invoice Details</div>
+              <div
+                className="card-title"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Invoice Details
+              </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px] p-[16px]">
               <div>
@@ -248,21 +344,6 @@ function NewInvoice() {
                   type="date"
                   value={invoiceDate}
                   onChange={(e) => setInvoiceDate(e.target.value)}
-                />
-              </div>
-              <div>
-                <label
-                  className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Discount (PKR)
-                </label>
-                <input
-                  className="fi"
-                  type="number"
-                  value={discount}
-                  min={0}
-                  onChange={(e) => setDiscount(Number(e.target.value))}
                 />
               </div>
               <div className="sm:col-span-2">
@@ -288,27 +369,18 @@ function NewInvoice() {
                   }}
                 />
               </div>
-              <div className="sm:col-span-2">
-                <label
-                  className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Notes (Optional)
-                </label>
-                <input
-                  className="fi"
-                  placeholder="Any notes..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                />
-              </div>
             </div>
           </div>
 
           {/* Line Items */}
           <div className="card">
             <div className="card-hdr">
-              <div className="card-title">Line Items</div>
+              <div
+                className="card-title"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Line Items
+              </div>
               <span
                 className="text-[11px]"
                 style={{ color: "var(--text-muted)" }}
@@ -317,20 +389,214 @@ function NewInvoice() {
               </span>
             </div>
             <div className="p-[17px] flex flex-col gap-[14px]">
-              {/* Product Search Row */}
-              <ProductSearch
-                onAdd={(product, qty) => {
-                  setItems((prev) => [
-                    ...prev,
-                    {
-                      productId: product._id,
-                      productName: product.name,
-                      quantity: qty,
-                      unitPriceSnapshot: product.price,
-                    },
-                  ]);
-                }}
-              />
+              {/* Item Composer */}
+              <div
+                className="rounded-xl p-[13px] relative z-[30]"
+                style={{ border: "1px solid var(--border)" }}
+              >
+                <div className="relative">
+                  <input
+                    className="fi pr-10"
+                    placeholder="Search item"
+                    value={itemQuery}
+                    onFocus={() => setShowItemResults(true)}
+                    onChange={(e) => {
+                      setItemQuery(e.target.value);
+                      setSelectedProduct(null);
+                      setShowItemResults(true);
+                    }}
+                    style={{
+                      borderColor: selectedProduct
+                        ? "rgba(0,201,122,.45)"
+                        : "var(--border-input)",
+                    }}
+                  />
+                  {(itemQuery || selectedProduct) && (
+                    <button
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
+                      style={{
+                        background: "rgba(255,77,106,.18)",
+                        border: "none",
+                        color: "#ff4d6a",
+                        cursor: "pointer",
+                      }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setItemQuery("");
+                        setSelectedProduct(null);
+                        setShowItemResults(false);
+                      }}
+                      aria-label="Clear selected item"
+                    >
+                      ✕
+                    </button>
+                  )}
+
+                  {showItemResults && (
+                    <div
+                      className="absolute left-0 right-0 mt-1 rounded-lg overflow-hidden"
+                      style={{
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border)",
+                        zIndex: 40,
+                        maxHeight: 380,
+                        overflowY: "auto",
+                        paddingBottom: 6,
+                      }}
+                    >
+                      {itemLoading ? (
+                        <div
+                          className="px-3 py-3 text-[12px]"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          Searching...
+                        </div>
+                      ) : itemResults.length === 0 ? (
+                        <div
+                          className="px-3 py-3 text-[12px]"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          No items found
+                        </div>
+                      ) : (
+                        itemResults.map((p) => (
+                          <button
+                            key={p._id}
+                            className="w-full text-left px-3 py-3 transition-colors"
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              borderBottom: "1px solid var(--border)",
+                              cursor: "pointer",
+                              color: "var(--text-primary)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background =
+                                "var(--electric-glow)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "transparent";
+                            }}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              handleSelectProduct(p);
+                            }}
+                          >
+                            <div className="text-[13px] font-semibold">
+                              {p.name}
+                            </div>
+                            <div
+                              className="text-[11px]"
+                              style={{ color: "var(--text-secondary)" }}
+                            >
+                              {p.sku} ·{" "}
+                              {(p.model || "NO MODEL").replace(/_/g, " ")} · PKR{" "}
+                              {p.price.toLocaleString()}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <div
+                      className="text-[11px] uppercase tracking-[.08em] mb-2"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Qty
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => setDraftQty((q) => Math.max(1, q - 1))}
+                      >
+                        −
+                      </button>
+                      <div
+                        className="fi flex-1 flex items-center justify-center font-inter font-semibold"
+                        style={{ minHeight: 40 }}
+                      >
+                        {draftQty}
+                      </div>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => setDraftQty((q) => q + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      className="block text-[11px] uppercase tracking-[.08em] mb-2"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Box Qty
+                    </label>
+                    <input
+                      className="fi"
+                      type="number"
+                      min={0}
+                      placeholder="Optional"
+                      value={draftBoxQty}
+                      onChange={(e) => setDraftBoxQty(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <div
+                      className="text-[11px] uppercase tracking-[.08em] mb-2"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Price
+                    </div>
+                    <div className="fi font-inter font-semibold">
+                      PKR {selectedProduct?.price?.toLocaleString() ?? 0}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      className="text-[11px] uppercase tracking-[.08em] mb-2"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Total
+                    </div>
+                    <div className="fi font-inter font-semibold">
+                      PKR{" "}
+                      {(
+                        (selectedProduct?.price ?? 0) * draftQty
+                      ).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleAddItem}
+                    disabled={!selectedProduct}
+                  >
+                    + Add Item
+                  </button>
+                </div>
+              </div>
+
+              {showItemResults && (
+                <div
+                  className="fixed inset-0 z-[20]"
+                  style={{
+                    background: "rgba(0,0,0,0.35)",
+                    backdropFilter: "blur(4px)",
+                  }}
+                  onClick={() => setShowItemResults(false)}
+                />
+              )}
 
               {/* Static Items List */}
               {items.length === 0 ? (
@@ -344,135 +610,180 @@ function NewInvoice() {
                   No items added yet — search and add products above
                 </div>
               ) : (
-                <div className="flex flex-col gap-[8px]">
-                  {/* Header */}
-                  <div
-                    className="hidden sm:grid text-[9px] uppercase tracking-[.12em] font-inter font-semibold px-[13px] pb-[6px]"
-                    style={{
-                      gridTemplateColumns: "1fr 60px 110px 110px 36px",
-                      color: "var(--text-muted)",
-                      borderBottom: "1px solid var(--border)",
-                    }}
-                  >
-                    <span>Product</span>
-                    <span>Qty</span>
-                    <span>Unit Price</span>
-                    <span>Total</span>
-                    <span></span>
-                  </div>
-
-                  {/* Items */}
-                  {items.map((item, i) => (
-                    <div
-                      key={i}
-                      className="rounded-lg px-[13px] py-[11px]"
-                      style={{
-                        background: "var(--bg-input)",
-                        border: "1px solid var(--border)",
-                      }}
-                    >
-                      {/* Desktop */}
+                <>
+                  {/* Mobile */}
+                  <div className="md:hidden flex flex-col gap-[8px]">
+                    {items.map((item, i) => (
                       <div
-                        className="hidden sm:grid items-center gap-[10px]"
+                        key={i}
+                        className="rounded-lg px-[13px] py-[12px] flex items-center justify-between gap-3"
                         style={{
-                          gridTemplateColumns: "1fr 60px 110px 110px 36px",
+                          background: "var(--bg-input)",
+                          border: "1px solid var(--border)",
                         }}
                       >
-                        <div>
+                        <div className="min-w-0">
                           <div
-                            className="text-[13px] font-semibold"
-                            style={{ color: "var(--text-primary)" }}
-                          >
-                            {item.productName}
-                          </div>
-                        </div>
-                        <div
-                          className="font-inter font-bold text-[13px]"
-                          style={{ color: "var(--text-primary)" }}
-                        >
-                          {item.quantity}
-                        </div>
-                        <div
-                          className="text-[13px]"
-                          style={{ color: "var(--text-secondary)" }}
-                        >
-                          PKR {item.unitPriceSnapshot.toLocaleString()}
-                        </div>
-                        <div
-                          className="font-inter font-bold text-[13px]"
-                          style={{ color: "var(--electric-bright)" }}
-                        >
-                          PKR{" "}
-                          {(
-                            item.quantity * item.unitPriceSnapshot
-                          ).toLocaleString()}
-                        </div>
-                        <button
-                          className="w-[36px] h-[36px] rounded-lg flex items-center justify-center"
-                          style={{
-                            background: "rgba(255,77,106,.1)",
-                            border: "1px solid rgba(255,77,106,.2)",
-                            color: "#ff4d6a",
-                            cursor: "pointer",
-                            fontSize: "16px",
-                          }}
-                          onClick={() =>
-                            setItems((prev) =>
-                              prev.filter((_, idx) => idx !== i),
-                            )
-                          }
-                        >
-                          ×
-                        </button>
-                      </div>
-
-                      {/* Mobile */}
-                      <div className="sm:hidden flex items-start justify-between gap-2">
-                        <div>
-                          <div
-                            className="font-semibold text-[13px] mb-[3px]"
+                            className="font-semibold text-[14px] truncate"
                             style={{ color: "var(--text-primary)" }}
                           >
                             {item.productName}
                           </div>
                           <div
-                            className="text-[11px]"
+                            className="text-[11px] mt-[1px]"
                             style={{ color: "var(--text-secondary)" }}
                           >
-                            Qty: {item.quantity} · PKR{" "}
-                            {item.unitPriceSnapshot.toLocaleString()} each
+                            {item.productModel?.replace(/_/g, " ")}
                           </div>
                           <div
-                            className="text-[12px] font-bold mt-[3px]"
-                            style={{ color: "var(--electric-bright)" }}
+                            className="text-[11px] mt-[3px]"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {item.quantity} × PKR{" "}
+                            {item.unitPriceSnapshot.toLocaleString()} · Boxes:{" "}
+                            {item.boxQty ?? "—"}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <div
+                            className="font-inter font-bold text-[18px]"
+                            style={{ color: "var(--text-primary)" }}
                           >
                             PKR{" "}
                             {(
                               item.quantity * item.unitPriceSnapshot
                             ).toLocaleString()}
                           </div>
+                          <button
+                            className="w-[34px] h-[34px] rounded-lg flex items-center justify-center"
+                            style={{
+                              background: "rgba(255,77,106,.1)",
+                              border: "1px solid rgba(255,77,106,.2)",
+                              color: "#ff4d6a",
+                              cursor: "pointer",
+                              fontSize: "15px",
+                            }}
+                            onClick={() =>
+                              setItems((prev) =>
+                                prev.filter((_, idx) => idx !== i),
+                              )
+                            }
+                          >
+                            🗑
+                          </button>
                         </div>
-                        <button
-                          className="w-[34px] h-[34px] rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{
-                            background: "rgba(255,77,106,.1)",
-                            border: "1px solid rgba(255,77,106,.2)",
-                            color: "#ff4d6a",
-                            cursor: "pointer",
-                            fontSize: "16px",
-                          }}
-                          onClick={() =>
-                            setItems((prev) =>
-                              prev.filter((_, idx) => idx !== i),
-                            )
-                          }
-                        >
-                          ×
-                        </button>
                       </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop */}
+                  <div
+                    className="hidden md:block rounded-lg overflow-hidden"
+                    style={{ border: "1px solid var(--border)" }}
+                  >
+                    <div
+                      className="grid px-[14px] py-[10px] text-[10px] uppercase tracking-[.12em] font-inter font-semibold"
+                      style={{
+                        gridTemplateColumns: "2fr 1fr 0.9fr 1.1fr 1.2fr 70px",
+                        color: "var(--text-secondary)",
+                        background: "rgba(255,255,255,0.02)",
+                        borderBottom: "1px solid var(--border)",
+                      }}
+                    >
+                      <div>Product</div>
+                      <div>Qty</div>
+                      <div>Boxes</div>
+                      <div>Unit Price</div>
+                      <div>Line Total</div>
+                      <div>Action</div>
                     </div>
-                  ))}
-                </div>
+
+                    {items.map((item, i) => (
+                      <div
+                        className="grid px-[14px] py-[12px] items-center"
+                        style={{
+                          gridTemplateColumns: "2fr 1fr 0.9fr 1.1fr 1.2fr 70px",
+                          borderBottom:
+                            i === items.length - 1
+                              ? "none"
+                              : "1px solid var(--border)",
+                        }}
+                      >
+                        <div className="min-w-0 pr-3">
+                          <div
+                            className="font-semibold text-[14px] truncate"
+                            style={{ color: "var(--text-primary)" }}
+                            title={item.productName}
+                          >
+                            {item.productName}
+                          </div>
+                          <div
+                            className="text-[12px] mt-[2px]"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {(item.productModel || "NO MODEL").replace(
+                              /_/g,
+                              " ",
+                            )}
+                          </div>
+                        </div>
+
+                        <div
+                          className="text-[14px] font-medium"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {item.quantity}
+                        </div>
+
+                        <div
+                          className="text-[14px]"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {item.boxQty ?? "—"}
+                        </div>
+
+                        <div
+                          className="text-[14px]"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          PKR {item.unitPriceSnapshot.toLocaleString()}
+                        </div>
+
+                        <div
+                          className="text-[15px] font-semibold"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          PKR{" "}
+                          {(
+                            item.quantity * item.unitPriceSnapshot
+                          ).toLocaleString()}
+                        </div>
+
+                        <div>
+                          <button
+                            className="w-[36px] h-[36px] rounded-lg flex items-center justify-center"
+                            style={{
+                              background: "rgba(255,77,106,.1)",
+                              border: "1px solid rgba(255,77,106,.2)",
+                              color: "#ff4d6a",
+                              cursor: "pointer",
+                              fontSize: "15px",
+                            }}
+                            onClick={() =>
+                              setItems((prev) =>
+                                prev.filter((_, idx) => idx !== i),
+                              )
+                            }
+                            title="Remove item"
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
 
               {/* Totals */}
@@ -493,7 +804,13 @@ function NewInvoice() {
                         className="font-inter font-semibold text-[14px]"
                         style={{ color: "#ff4d6a" }}
                       >
-                        − PKR {discount.toLocaleString()}
+                        −{" "}
+                        {discountType === "PERCENT"
+                          ? `${discountValue}%`
+                          : "PKR"}{" "}
+                        {discountType === "PERCENT"
+                          ? `(PKR ${discount.toLocaleString()})`
+                          : discount.toLocaleString()}
                       </div>
                     </div>
                   )}
@@ -536,6 +853,26 @@ function NewInvoice() {
 
         {/* RIGHT */}
         <div className="flex flex-col gap-[14px]">
+          {/* Notes */}
+          <div className="card">
+            <div className="card-hdr">
+              <div
+                className="card-title"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Notes (Optional)
+              </div>
+            </div>
+            <div className="p-[15px_17px]">
+              <input
+                className="fi"
+                placeholder="Add a note..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </div>
+
           {/* Customer Preview */}
           <div className="card">
             <div className="card-hdr">
@@ -633,13 +970,85 @@ function NewInvoice() {
                   PKR {subtotal.toLocaleString()}
                 </span>
               </div>
+
+              <div className="pt-1">
+                <div
+                  className="text-[10px] uppercase tracking-[.1em] mb-[8px] font-inter"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  Discount
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn"
+                    style={{
+                      background:
+                        discountType === "PKR"
+                          ? "var(--electric)"
+                          : "var(--bg-input)",
+                      color:
+                        discountType === "PKR"
+                          ? "#fff"
+                          : "var(--text-secondary)",
+                      border: "1px solid var(--border)",
+                      minWidth: 62,
+                    }}
+                    onClick={() => setDiscountType("PKR")}
+                  >
+                    PKR
+                  </button>
+                  <button
+                    className="btn"
+                    style={{
+                      background:
+                        discountType === "PERCENT"
+                          ? "var(--electric)"
+                          : "var(--bg-input)",
+                      color:
+                        discountType === "PERCENT"
+                          ? "#fff"
+                          : "var(--text-secondary)",
+                      border: "1px solid var(--border)",
+                      minWidth: 46,
+                    }}
+                    onClick={() => setDiscountType("PERCENT")}
+                  >
+                    %
+                  </button>
+                  <input
+                    className="fi"
+                    type="text"
+                    inputMode="decimal"
+                    value={discountInput}
+                    placeholder={
+                      discountType === "PERCENT"
+                        ? "Enter discount %"
+                        : "Enter discount amount"
+                    }
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (
+                        next === "" ||
+                        /^(\d+\.?\d{0,2}|\d*\.\d{1,2})$/.test(next)
+                      ) {
+                        setDiscountInput(next);
+                        setDiscountValue(next === "" ? 0 : Number(next));
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
               {discount > 0 && (
                 <div className="flex justify-between text-[12px]">
                   <span style={{ color: "var(--text-secondary)" }}>
                     Discount
                   </span>
                   <span style={{ color: "#ff4d6a" }}>
-                    - PKR {discount.toLocaleString()}
+                    - {discountType === "PERCENT" ? `${discountValue}%` : "PKR"}{" "}
+                    {discountType === "PERCENT"
+                      ? `(PKR ${discount.toLocaleString()})`
+                      : discount.toLocaleString()}
                   </span>
                 </div>
               )}
@@ -653,182 +1062,6 @@ function NewInvoice() {
                 <span style={{ color: "var(--electric-bright)" }}>
                   PKR {grandTotal.toLocaleString()}
                 </span>
-              </div>
-            </div>
-          </div>
-          {/* Payment Info */}
-          <div className="card">
-            <div className="card-hdr">
-              <div className="card-title">Payment Info</div>
-            </div>
-            <div className="p-[15px_17px] flex flex-col gap-[13px]">
-              {/* Status chips */}
-              <div>
-                <label
-                  className="block text-[10px] uppercase tracking-[.1em] mb-[8px] font-inter font-semibold"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Payment Status
-                </label>
-                <div className="flex gap-[7px]">
-                  {(["unpaid", "partial", "paid"] as const).map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => {
-                        setPaymentStatus(s);
-                        if (s === "unpaid") setPaymentAmount(0);
-                        if (s === "paid") setPaymentAmount(grandTotal);
-                      }}
-                      className="flex-1 py-[7px] rounded-lg text-[11px] font-inter font-semibold capitalize transition-all"
-                      style={{
-                        border: "1px solid",
-                        cursor: "pointer",
-                        background:
-                          paymentStatus === s
-                            ? s === "paid"
-                              ? "rgba(0,201,122,.15)"
-                              : s === "partial"
-                                ? "rgba(255,176,32,.15)"
-                                : "rgba(255,77,106,.15)"
-                            : "var(--bg-input)",
-                        borderColor:
-                          paymentStatus === s
-                            ? s === "paid"
-                              ? "#00c97a"
-                              : s === "partial"
-                                ? "#ffb020"
-                                : "#ff4d6a"
-                            : "var(--border)",
-                        color:
-                          paymentStatus === s
-                            ? s === "paid"
-                              ? "#00c97a"
-                              : s === "partial"
-                                ? "#ffb020"
-                                : "#ff4d6a"
-                            : "var(--text-secondary)",
-                      }}
-                    >
-                      {s === "paid"
-                        ? "✓ Paid"
-                        : s === "partial"
-                          ? "◑ Partial"
-                          : "○ Unpaid"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Amount received — only show if partial or paid */}
-              {paymentStatus !== "unpaid" && (
-                <>
-                  <div>
-                    <label
-                      className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Amount Received (PKR)
-                    </label>
-                    <input
-                      className="fi"
-                      type="number"
-                      placeholder="0"
-                      value={paymentAmount || ""}
-                      onChange={(e) => setPaymentAmount(Number(e.target.value))}
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Payment Method
-                    </label>
-                    <select
-                      className="fi"
-                      value={paymentMethod}
-                      onChange={(e) =>
-                        setPaymentMethod(
-                          e.target.value as "CASH" | "BANK" | "OTHER",
-                        )
-                      }
-                    >
-                      <option value="CASH">Cash</option>
-                      <option value="BANK">Bank Transfer</option>
-                      <option value="OTHER">Other</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Reference (Optional)
-                    </label>
-                    <input
-                      className="fi"
-                      placeholder="e.g. TRX-123"
-                      value={paymentReference}
-                      onChange={(e) => setPaymentReference(e.target.value)}
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Payment Notes
-                    </label>
-                    <input
-                      className="fi"
-                      placeholder="Optional..."
-                      value={paymentNotes}
-                      onChange={(e) => setPaymentNotes(e.target.value)}
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* Balance preview */}
-              <div
-                className="p-[11px] rounded-lg"
-                style={{
-                  background:
-                    paymentStatus === "paid"
-                      ? "rgba(0,201,122,.08)"
-                      : "rgba(255,77,106,.08)",
-                  border: `1px solid ${
-                    paymentStatus === "paid"
-                      ? "rgba(0,201,122,.2)"
-                      : "rgba(255,77,106,.2)"
-                  }`,
-                }}
-              >
-                <div className="flex justify-between items-center">
-                  <div
-                    className="text-[10px] uppercase tracking-[.1em] font-inter"
-                    style={{ color: "var(--text-secondary)" }}
-                  >
-                    Remaining After
-                  </div>
-                  <div
-                    className="font-inter font-extrabold text-[16px]"
-                    style={{
-                      color:
-                        paymentStatus === "paid"
-                          ? "#00c97a"
-                          : grandTotal - paymentAmount <= 0
-                            ? "#00c97a"
-                            : "#ff4d6a",
-                    }}
-                  >
-                    PKR{" "}
-                    {Math.max(0, grandTotal - paymentAmount).toLocaleString()}
-                  </div>
-                </div>
               </div>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import Modal from "./Modal";
 import { useAuth } from "../../context/AuthContext";
 import { addCustomerAPI, updateCustomerAPI } from "../../api/customers";
+import { useToast } from "../../context/ToastContext";
 
 interface Customer {
   _id?: string;
@@ -15,7 +16,7 @@ interface Customer {
 interface CustomerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: () => void | Promise<void>;
   customer?: Customer | null;
 }
 
@@ -26,6 +27,7 @@ function CustomerModal({
   customer,
 }: CustomerModalProps) {
   const { token } = useAuth();
+  const { showToast } = useToast();
   const [name, setName] = useState("");
   const [shopName, setShopName] = useState("");
   const [address, setAddress] = useState("");
@@ -54,34 +56,45 @@ function CustomerModal({
   }, [customer, isOpen]);
 
   const handleSubmit = async () => {
-    if (!name) {
+    if (!token) {
+      setError("You are not authenticated. Please login again.");
+      return;
+    }
+
+    if (!name.trim()) {
       setError("Customer name is required");
       return;
     }
+
+    const payload = {
+      name: name.trim(),
+      shop_name: shopName.trim() || undefined,
+      address: address.trim() || undefined,
+      phone: phone.trim() || undefined,
+      notes: notes.trim() || undefined,
+    };
+
     setError("");
     setIsLoading(true);
     try {
       if (isEditing && customer?._id) {
-        await updateCustomerAPI(token!, customer._id, {
-          name,
-          shop_name: shopName,
-          address,
-          phone,
-          notes,
-        });
+        await updateCustomerAPI(token, customer._id, payload);
       } else {
-        await addCustomerAPI(token!, {
-          name,
-          shop_name: shopName,
-          address,
-          phone,
-          notes,
-        });
+        await addCustomerAPI(token, payload);
       }
-      onSuccess();
+
+      await Promise.resolve(onSuccess());
+      showToast(
+        "success",
+        isEditing
+          ? "Customer updated successfully"
+          : "Customer added successfully",
+      );
       onClose();
     } catch (err: any) {
-      setError(err.message || "Something went wrong");
+      const message = err.message || "Something went wrong";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsLoading(false);
     }

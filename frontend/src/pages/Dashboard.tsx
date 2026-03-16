@@ -1,39 +1,281 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import StatCard from "../components/ui/StatCard";
 import Badge from "../components/ui/Badge";
 import Avatar from "../components/ui/Avatar";
-import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { getSummaryAPI } from "../api/summary";
+import { getInvoicesAPI } from "../api/invoices";
+
+type SummaryResponse = {
+  period: { from: string; to: string };
+  overdue_days: number;
+  kpis: {
+    receivable: number;
+    collected: number;
+    partial_count: number;
+    overdue_amount: number;
+    overdue_customers: number;
+  };
+  recent_invoices: InvoiceRow[];
+};
+
+type InvoiceRow = {
+  _id: string;
+  invoice_no: string;
+  invoice_date: string;
+  total_amount: number;
+  remaining_amount: number;
+  status: "unpaid" | "partial" | "completed";
+  customer_id: {
+    _id: string;
+    name: string;
+    shop_name?: string;
+  };
+};
+
+type OutstandingCustomer = {
+  customerId: string;
+  name: string;
+  shop: string;
+  amount: number;
+  hasOverdue: boolean;
+  initials: string;
+  gradient: "default" | "cyan" | "green" | "purple" | "red";
+};
+
+const GRADIENTS: Array<"default" | "cyan" | "green" | "purple" | "red"> = [
+  "default",
+  "cyan",
+  "green",
+  "purple",
+  "red",
+];
+
+function pkr(value: number) {
+  return `PKR ${Math.max(0, value || 0).toLocaleString()}`;
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "--";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+function getGradient(name: string) {
+  const hash = name.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return GRADIENTS[hash % GRADIENTS.length];
+}
+
+function mapInvoiceStatusToBadge(status: "unpaid" | "partial" | "completed") {
+  if (status === "completed") return "paid" as const;
+  if (status === "partial") return "partial" as const;
+  return "unpaid" as const;
+}
+
+function formatMonthRange(fromIso?: string, toIso?: string) {
+  if (!fromIso || !toIso) return "selected period";
+  const from = new Date(fromIso);
+  const to = new Date(toIso);
+  const sameMonth =
+    from.getMonth() === to.getMonth() &&
+    from.getFullYear() === to.getFullYear();
+  if (sameMonth) {
+    return from.toLocaleDateString("en-GB", {
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return `${from.toLocaleDateString("en-GB", { month: "short" })} - ${to.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}`;
+}
 
 function Dashboard() {
+  const { token } = useAuth();
   const navigate = useNavigate();
+
+  const [summary, setSummary] = useState<SummaryResponse | null>(null);
+  const [outstanding, setOutstanding] = useState<OutstandingCustomer[]>([]);
+  const [openInvoicesCount, setOpenInvoicesCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  const fetchInvoicesByStatus = useCallback(
+    async (status: "unpaid" | "partial") => {
+      if (!token) return [] as InvoiceRow[];
+      const all: InvoiceRow[] = [];
+      let page = 1;
+      let totalPages = 1;
+
+      while (page <= totalPages) {
+        const data = await getInvoicesAPI(token, { status, page, limit: 100 });
+        all.push(...((data.items ?? []) as InvoiceRow[]));
+        totalPages = data.pagination?.totalPages ?? 1;
+        page += 1;
+      }
+      return all;
+    },
+    [token],
+  );
+
+  const fetchDashboard = useCallback(async () => {
+    if (!token) {
+      setIsLoading(false);
+      setSummary(null);
+      setOutstanding([]);
+      return;
+    }
+
+    setIsLoading(true);
+    setError("");
+    try {
+      const dashboardSummary = (await getSummaryAPI(token, {
+        overdueDays: 7,
+      })) as SummaryResponse;
+
+      const [unpaid, partial] = await Promise.all([
+        fetchInvoicesByStatus("unpaid"),
+        fetchInvoicesByStatus("partial"),
+      ]);
+
+      const openInvoices = [...unpaid, ...partial].filter(
+        (inv) => (inv.remaining_amount ?? 0) > 0,
+      );
+      setOpenInvoicesCount(openInvoices.length);
+
+      const overdueCutoff = new Date();
+      overdueCutoff.setHours(0, 0, 0, 0);
+      overdueCutoff.setDate(
+        overdueCutoff.getDate() - (dashboardSummary.overdue_days ?? 7),
+      );
+
+      const map = new Map<string, OutstandingCustomer>();
+      openInvoices.forEach((inv) => {
+        const customer = inv.customer_id;
+        if (!customer?._id) return;
+
+        const existing = map.get(customer._id);
+        const amount = inv.remaining_amount ?? 0;
+        const isOverdue =
+          new Date(inv.invoice_date).getTime() < overdueCutoff.getTime();
+
+        if (!existing) {
+          map.set(customer._id, {
+            customerId: customer._id,
+            name: customer.name || "Unknown",
+            shop: customer.shop_name || "No shop name",
+            amount,
+            hasOverdue: isOverdue,
+            initials: getInitials(customer.name || "U"),
+            gradient: getGradient(customer.name || "Unknown"),
+          });
+          return;
+        }
+
+        existing.amount += amount;
+        existing.hasOverdue = existing.hasOverdue || isOverdue;
+      });
+
+      const topOutstanding = Array.from(map.values())
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 6);
+
+      setSummary(dashboardSummary);
+      setOutstanding(topOutstanding);
+    } catch (err: any) {
+      setError(err.message || "Failed to load dashboard");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, fetchInvoicesByStatus]);
+
+  useEffect(() => {
+    fetchDashboard();
+  }, [fetchDashboard]);
+
+  useEffect(() => {
+    const t = setInterval(() => setCurrentTime(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const maxOutstanding = useMemo(
+    () => Math.max(1, ...outstanding.map((o) => o.amount)),
+    [outstanding],
+  );
+
+  const greetingText = useMemo(() => {
+    const hour = currentTime.getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
+  }, [currentTime]);
+
+  const todayLabel = useMemo(
+    () =>
+      currentTime.toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }),
+    [currentTime],
+  );
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
       {/* Page Header */}
-      <div className="flex items-center justify-between mb-[18px] flex-wrap gap-[10px]">
-        <div>
-          <div
-            className="font-inter font-extrabold text-[20px]"
-            style={{ color: "var(--text-primary)" }}
-          >
-            Good morning,{" "}
-            <span style={{ color: "var(--electric)" }}>SRC Admin</span>
+      <div className="card p-[14px] mb-[18px]">
+        <div className="flex items-start justify-between gap-[10px] flex-wrap">
+          <div>
+            <div
+              className="font-inter font-extrabold text-[18px]"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {greetingText},
+            </div>
+            <div
+              className="font-inter font-bold text-[15px] mt-[2px]"
+              style={{ color: "var(--electric-bright)" }}
+            >
+              Shafiq Traders
+            </div>
           </div>
           <div
-            className="text-[12px] mt-[3px]"
+            className="text-[12px] font-inter font-semibold"
             style={{ color: "var(--text-secondary)" }}
           >
-            Here's your business overview for today.
+            {todayLabel}
           </div>
         </div>
       </div>
 
+      {error && (
+        <div
+          className="p-[10px_13px] rounded-lg mb-[14px] text-[12px] font-inter"
+          style={{
+            background: "rgba(255,77,106,.1)",
+            border: "1px solid rgba(255,77,106,.2)",
+            color: "#ff4d6a",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      <div
+        className="text-[12px] tracking-[1px] font-inter font-semibold mb-[10px]"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        OVERVIEW
+      </div>
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-[13px] mb-[22px]">
-        {" "}
         <StatCard
           label="Total Receivable"
-          value="PKR 1,24,500"
-          change="12 unpaid invoices"
+          value={pkr(summary?.kpis.receivable ?? 0)}
+          change={`${openInvoicesCount} open invoices`}
           changeType="down"
           accentColor="#1a6eff"
           icon={
@@ -51,9 +293,9 @@ function Dashboard() {
           }
         />
         <StatCard
-          label="Collected (Feb)"
-          value="PKR 78,200"
-          change="↑ 18% vs last month"
+          label={`Collected (${formatMonthRange(summary?.period?.from, summary?.period?.to)})`}
+          value={pkr(summary?.kpis.collected ?? 0)}
+          change="received from ledger"
           changeType="up"
           accentColor="#00c97a"
           icon={
@@ -71,7 +313,7 @@ function Dashboard() {
         />
         <StatCard
           label="Partial Payments"
-          value="8"
+          value={String(summary?.kpis.partial_count ?? 0)}
           change="invoices pending"
           changeType="neutral"
           accentColor="#ffb020"
@@ -91,8 +333,8 @@ function Dashboard() {
         />
         <StatCard
           label="Overdue"
-          value="PKR 31,000"
-          change="3 customers"
+          value={pkr(summary?.kpis.overdue_amount ?? 0)}
+          change={`${summary?.kpis.overdue_customers ?? 0} customers`}
           changeType="down"
           accentColor="#ff4d6a"
           icon={
@@ -113,7 +355,6 @@ function Dashboard() {
 
       {/* Two Col */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-[16px]">
-        {" "}
         {/* Outstanding Balances */}
         <div className="card">
           <div className="card-hdr">
@@ -126,91 +367,78 @@ function Dashboard() {
             <button
               className="btn btn-ghost"
               style={{ padding: "5px 11px", fontSize: "11px" }}
+              onClick={() => navigate("/ledger")}
             >
               View All
             </button>
           </div>
 
-          {[
-            {
-              initials: "AE",
-              gradient: "default",
-              name: "Ahmad Electronics",
-              shop: "Main Bazaar, Gujrat",
-              amount: "PKR 18,500",
-              type: "ov",
-              bar: 75,
-            },
-            {
-              initials: "ZT",
-              gradient: "cyan",
-              name: "Zahid Traders",
-              shop: "Saddar, Gujrat",
-              amount: "PKR 8,200",
-              type: "pa",
-              bar: 40,
-            },
-            {
-              initials: "RS",
-              gradient: "green",
-              name: "Raza Stores",
-              shop: "Civil Lines, Gujrat",
-              amount: "PKR 12,300",
-              type: "ov",
-              bar: 60,
-            },
-            {
-              initials: "MK",
-              gradient: "purple",
-              name: "M. Khan & Sons",
-              shop: "Kharian Road",
-              amount: "PKR 5,000",
-              type: "pa",
-              bar: 25,
-            },
-          ].map((item) => (
+          {isLoading ? (
             <div
-              key={item.name}
-              className="flex items-center gap-[11px] px-[17px] py-[12px]"
-              style={{ borderBottom: "1px solid rgba(26,110,255,.07)" }}
+              className="px-[17px] py-[18px]"
+              style={{ color: "var(--text-secondary)" }}
             >
-              <Avatar initials={item.initials} gradient={item.gradient} />
-              <div>
-                <div
-                  className="text-[13px] font-medium"
-                  style={{ color: "var(--text-primary)" }}
-                >
-                  {item.name}
-                </div>
-                <div
-                  className="text-[10px]"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  {item.shop}
-                </div>
-              </div>
-              <div className="ml-auto text-right">
-                <div
-                  className="font-inter font-bold text-[14px]"
-                  style={{ color: item.type === "ov" ? "#ff4d6a" : "#ffb020" }}
-                >
-                  {item.amount}
-                </div>
-                <div
-                  className="w-[65px] h-[3px] rounded-sm mt-[3px]"
-                  style={{ background: "rgba(128,128,128,.15)" }}
-                >
-                  <div
-                    className="h-[3px] rounded-sm"
-                    style={{
-                      width: `${item.bar}%`,
-                      background: item.type === "ov" ? "#ff4d6a" : "#ffb020",
-                    }}
-                  />
-                </div>
-              </div>
+              Loading outstanding balances...
             </div>
-          ))}
+          ) : outstanding.length === 0 ? (
+            <div
+              className="px-[17px] py-[18px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              No outstanding balances.
+            </div>
+          ) : (
+            outstanding.map((item) => {
+              const bar = Math.max(
+                8,
+                Math.round((item.amount / maxOutstanding) * 100),
+              );
+              return (
+                <div
+                  key={item.customerId}
+                  className="flex items-center gap-[11px] px-[17px] py-[12px] cursor-pointer"
+                  style={{ borderBottom: "1px solid rgba(26,110,255,.07)" }}
+                  onClick={() => navigate(`/ledger/view/${item.customerId}`)}
+                >
+                  <Avatar initials={item.initials} gradient={item.gradient} />
+                  <div>
+                    <div
+                      className="text-[13px] font-medium"
+                      style={{ color: "var(--text-primary)" }}
+                    >
+                      {item.name}
+                    </div>
+                    <div
+                      className="text-[10px]"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      {item.shop}
+                    </div>
+                  </div>
+                  <div className="ml-auto text-right">
+                    <div
+                      className="font-inter font-bold text-[14px]"
+                      style={{ color: item.hasOverdue ? "#ff4d6a" : "#ffb020" }}
+                    >
+                      {pkr(item.amount)}
+                    </div>
+                    <div
+                      className="w-[65px] h-[3px] rounded-sm mt-[3px]"
+                      style={{ background: "rgba(128,128,128,.15)" }}
+                    >
+                      <div
+                        className="h-[3px] rounded-sm"
+                        style={{
+                          width: `${bar}%`,
+                          background: item.hasOverdue ? "#ff4d6a" : "#ffb020",
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
         {/* Recent Invoices */}
         <div className="card">
@@ -240,43 +468,44 @@ function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  {
-                    inv: "#INV-0042",
-                    customer: "Ahmad Electronics",
-                    amount: "PKR 22,000",
-                    status: "unpaid" as const,
-                  },
-                  {
-                    inv: "#INV-0041",
-                    customer: "Zahid Traders",
-                    amount: "PKR 11,500",
-                    status: "partial" as const,
-                  },
-                  {
-                    inv: "#INV-0040",
-                    customer: "Raza Stores",
-                    amount: "PKR 8,800",
-                    status: "paid" as const,
-                  },
-                  {
-                    inv: "#INV-0039",
-                    customer: "M. Khan",
-                    amount: "PKR 15,200",
-                    status: "partial" as const,
-                  },
-                ].map((row) => (
-                  <tr key={row.inv}>
-                    <td style={{ color: "var(--electric-bright)" }}>
-                      {row.inv}
-                    </td>
-                    <td>{row.customer}</td>
-                    <td>{row.amount}</td>
-                    <td>
-                      <Badge status={row.status} />
+                {isLoading ? (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="text-center py-8"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Loading recent invoices...
                     </td>
                   </tr>
-                ))}
+                ) : (summary?.recent_invoices?.length ?? 0) === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="text-center py-8"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      No invoices yet
+                    </td>
+                  </tr>
+                ) : (
+                  (summary?.recent_invoices ?? []).map((row) => (
+                    <tr
+                      key={row._id}
+                      onClick={() => navigate(`/invoices/${row._id}`)}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <td style={{ color: "var(--electric-bright)" }}>
+                        #{row.invoice_no}
+                      </td>
+                      <td>{row.customer_id?.name ?? "—"}</td>
+                      <td>{pkr(row.total_amount ?? 0)}</td>
+                      <td>
+                        <Badge status={mapInvoiceStatusToBadge(row.status)} />
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -1,105 +1,154 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Chip from "../components/ui/Chip";
 import ProductModal from "../components/ui/ProductModal";
 import { useAuth } from "../context/AuthContext";
-import { getProductsAPI, deleteProductAPI } from "../api/products";
+import {
+  DEFAULT_PRODUCT_MODELS,
+  getProductsAPI,
+  getProductModelsAPI,
+  normalizeModelLabel,
+  deleteProductAPI,
+  type Product,
+} from "../api/products";
+import { useToast } from "../context/ToastContext";
 
-const CATEGORIES = [
-  "All",
-  "BULB",
-  "TUBE_LIGHT",
-  "SWITCH",
-  "SOCKET",
-  "PLUG",
-  "WIRE",
-  "CABLE",
-  "MCB",
-  "BREAKER",
-  "DB_BOX",
-  "FAN",
-  "HOLDER",
-  "ADAPTER",
-  "EXTENSION_BOARD",
-  "DIMMER",
-  "SENSOR",
-  "CHARGER",
-  "INVERTER",
-  "BATTERY",
-  "OTHER",
+const TYPE_FILTERS = [
+  { label: "All", value: "" },
+  { label: "With Model", value: "model" },
+  { label: "Single", value: "direct" },
 ];
-
-interface Product {
-  _id: string;
-  name: string;
-  category: string;
-  price: number;
-  sku: string;
-  is_active: boolean;
-}
 
 function Products() {
   const { token } = useAuth();
+  const { showToast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
+  const [models, setModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("All");
   const [modalOpen, setModalOpen] = useState(false);
   const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [editVariants, setEditVariants] = useState<Product[] | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [activeTypeFilter, setActiveTypeFilter] = useState<
+    "" | "model" | "direct"
+  >("");
+  const [activeModelFilter, setActiveModelFilter] = useState("");
+
+  useEffect(() => {
+    if (!token) return;
+    getProductModelsAPI(token)
+      .then((data) => setModels(data.models ?? []))
+      .catch(() => setModels(DEFAULT_PRODUCT_MODELS));
+  }, [token]);
 
   const fetchProducts = useCallback(async () => {
+    if (!token) {
+      setProducts([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError("");
     try {
-      const data = await getProductsAPI(token!, {
+      const data = await getProductsAPI(token, {
         q: search || undefined,
-        category: activeCategory !== "All" ? activeCategory : undefined,
-        limit: 50,
         isActive: true,
+        limit: 100,
       });
-      console.log("API Response:", data); // ← add this
-
       setProducts(data.items ?? []);
     } catch (err: any) {
-      setError(err.message || "Failed to load products");
+      const message = err.message || "Failed to load products";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsLoading(false);
     }
-  }, [token, search, activeCategory]);
+  }, [token, search, showToast]);
 
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
 
-  const handleEdit = (product: Product) => {
-    setEditProduct(product);
-    setModalOpen(true);
-  };
-
   const handleDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteId || !token) return;
     setDeleteLoading(true);
     try {
-      await deleteProductAPI(token!, deleteId);
+      const ids = deleteId.split(",").filter(Boolean);
+      await Promise.all(ids.map((id) => deleteProductAPI(token, id)));
       setDeleteId(null);
-      fetchProducts();
+      await fetchProducts();
+      showToast("success", "Product deleted successfully");
     } catch (err: any) {
-      alert(err.message || "Failed to delete product");
+      showToast("error", err.message || "Failed to delete product");
     } finally {
       setDeleteLoading(false);
     }
   };
 
-  const handleModalClose = () => {
-    setModalOpen(false);
-    setEditProduct(null);
+  const formatModel = (value?: string | null) => {
+    if (!value?.trim()) return "—";
+    return value.replace(/_/g, " ");
   };
+
+  const toModelKey = (value?: string | null) =>
+    value ? normalizeModelLabel(value) : "";
+
+  const modelProducts = useMemo(
+    () =>
+      products.filter(
+        (p) =>
+          p.type === "model" &&
+          (activeTypeFilter ? p.type === activeTypeFilter : true) &&
+          (activeModelFilter
+            ? toModelKey(p.model) === activeModelFilter
+            : true),
+      ),
+    [products, activeTypeFilter, activeModelFilter],
+  );
+
+  const directProducts = useMemo(
+    () =>
+      products.filter(
+        (p) =>
+          (p.type === "direct" || !p.model) &&
+          (activeTypeFilter ? "direct" === activeTypeFilter : true),
+      ),
+    [products, activeTypeFilter],
+  );
+
+  const modelLabels = useMemo(() => {
+    const fromProducts = Array.from(
+      new Set(
+        modelProducts
+          .map((p) => toModelKey(p.model))
+          .filter(Boolean) as string[],
+      ),
+    );
+    const ordered = Array.from(new Set(models.map((m) => toModelKey(m))));
+    for (const label of fromProducts) {
+      if (!ordered.includes(label)) ordered.push(label);
+    }
+    return ordered;
+  }, [models, modelProducts]);
+
+  const groupedModelProducts = useMemo(() => {
+    const grouped = modelProducts.reduce(
+      (acc, p) => {
+        if (!acc[p.name]) acc[p.name] = [];
+        acc[p.name].push(p);
+        return acc;
+      },
+      {} as Record<string, Product[]>,
+    );
+    return Object.entries(grouped);
+  }, [modelProducts]);
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
-      {/* Page Header */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-[18px] flex-wrap gap-[10px]">
         <div
           className="font-inter font-extrabold text-[20px]"
@@ -111,6 +160,7 @@ function Products() {
           className="btn btn-primary"
           onClick={() => {
             setEditProduct(null);
+            setEditVariants(null);
             setModalOpen(true);
           }}
         >
@@ -129,8 +179,8 @@ function Products() {
         </button>
       </div>
 
-      {/* Search + Chips */}
-      <div className="flex items-center gap-[10px] mb-[16px] flex-wrap">
+      {/* Search */}
+      <div className="flex items-center gap-[10px] mb-[13px]">
         <div
           className="s-box"
           style={{ flex: 1, minWidth: "160px", maxWidth: "280px" }}
@@ -149,20 +199,10 @@ function Products() {
           </svg>
           <input
             type="text"
-            placeholder="Search by name or SKU..."
+            placeholder="Search products..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-        </div>
-        <div className="flex gap-[7px] flex-wrap">
-          {CATEGORIES.map((cat) => (
-            <Chip
-              key={cat}
-              label={cat.replace("_", " ")}
-              active={activeCategory === cat}
-              onClick={() => setActiveCategory(cat)}
-            />
-          ))}
         </div>
       </div>
 
@@ -180,24 +220,80 @@ function Products() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Filters */}
+      <div className="flex gap-[7px] flex-wrap mb-[12px]">
+        {TYPE_FILTERS.map((f) => (
+          <Chip
+            key={f.value}
+            label={f.label}
+            active={activeTypeFilter === f.value}
+            onClick={() => {
+              setActiveTypeFilter(f.value as "" | "model" | "direct");
+              if (f.value === "direct") setActiveModelFilter("");
+            }}
+          />
+        ))}
+      </div>
+
+      {(activeTypeFilter === "" || activeTypeFilter === "model") && (
+        <div className="flex gap-[7px] flex-wrap mb-[14px]">
+          <Chip
+            label="All Models"
+            active={activeModelFilter === ""}
+            onClick={() => setActiveModelFilter("")}
+          />
+          {modelLabels.map((m) => (
+            <Chip
+              key={m}
+              label={formatModel(m)}
+              active={activeModelFilter === m}
+              onClick={() => setActiveModelFilter(m)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Model Products */}
       <div className="card">
+        <div
+          className="p-[14px_14px_8px] border-b"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <div
+            className="font-inter font-bold text-[14px]"
+            style={{ color: "var(--text-primary)" }}
+          >
+            Model Based Products
+          </div>
+          {modelLabels.length > 0 && (
+            <div className="flex flex-wrap gap-[6px] mt-[8px]">
+              {modelLabels.map((m) => (
+                <span key={m} className="chip">
+                  {formatModel(m)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="tbl-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-products">
             <thead>
               <tr>
-                <th>Product</th>
-                <th>SKU</th>
-                <th>Category</th>
-                <th>Price</th>
-                <th>Status</th>
-                <th></th>
+                <th style={{ width: "40px" }}>#</th>
+                <th>Name</th>
+                {modelLabels.map((m) => (
+                  <th key={m}>{formatModel(m)}</th>
+                ))}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-8">
+                  <td
+                    colSpan={3 + modelLabels.length}
+                    className="text-center py-8"
+                  >
                     <div className="flex items-center justify-center gap-2">
                       <div
                         className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
@@ -212,63 +308,185 @@ function Products() {
                     </div>
                   </td>
                 </tr>
-              ) : products.length === 0 ? (
+              ) : groupedModelProducts.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={3 + modelLabels.length}
                     className="text-center py-8"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    No products found
+                    No model products found
                   </td>
                 </tr>
               ) : (
-                products.map((p) => (
-                  <tr key={p._id}>
+                groupedModelProducts.map(([name, variants], index) => (
+                  <tr key={name}>
+                    <td
+                      className="text-[12px] font-inter font-semibold"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {index + 1}
+                    </td>
+
+                    {/* Name */}
                     <td>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-[10px]">
                         <div
-                          className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[14px] flex-shrink-0 font-inter font-bold"
+                          className="w-8 h-8 rounded-lg flex items-center justify-center font-inter font-bold text-[13px] flex-shrink-0"
                           style={{
                             background: "var(--electric-glow)",
                             color: "var(--electric-bright)",
                             border: "1px solid var(--border)",
                           }}
                         >
-                          {p.name.charAt(0).toUpperCase()}
+                          {name.charAt(0)}
                         </div>
-                        <div>
-                          <div
-                            className="font-medium text-[12px]"
-                            style={{ color: "var(--text-primary)" }}
-                          >
-                            {p.name}
-                          </div>
-                          <div
-                            className="text-[10px]"
-                            style={{ color: "var(--text-secondary)" }}
-                          >
-                            {p.category.replace("_", " ")}
-                          </div>
-                        </div>
+                        <span
+                          className="font-inter font-semibold text-[13px] truncate max-w-[140px] sm:max-w-[220px]"
+                          style={{ color: "var(--text-primary)" }}
+                          title={name}
+                        >
+                          {name}
+                        </span>
                       </div>
                     </td>
-                    <td style={{ color: "var(--electric-bright)" }}>{p.sku}</td>
-                    <td style={{ color: "var(--text-secondary)" }}>
-                      {p.category.replace("_", " ")}
-                    </td>
-                    <td className="font-inter font-bold">
-                      PKR {p.price.toLocaleString()}
-                    </td>
-                    <td style={{ color: p.is_active ? "#00c97a" : "#ff4d6a" }}>
-                      {p.is_active ? "Active" : "Inactive"}
-                    </td>
+
+                    {modelLabels.map((m) => {
+                      const variant = variants.find(
+                        (v) => toModelKey(v.model) === m,
+                      );
+                      return (
+                        <td key={m}>
+                          {variant ? (
+                            <span
+                              className="font-inter font-bold text-[13px]"
+                              style={{ color: "var(--electric-bright)" }}
+                            >
+                              PKR {variant.price.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)" }}>
+                              —
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+
                     <td>
-                      <div className="flex items-center gap-[6px]">
+                      <div className="flex items-center gap-[6px] whitespace-nowrap">
                         <button
                           className="btn btn-ghost"
                           style={{ padding: "4px 10px", fontSize: "11px" }}
-                          onClick={() => handleEdit(p)}
+                          onClick={() => {
+                            setEditProduct(null);
+                            setEditVariants(variants);
+                            setModalOpen(true);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          style={{
+                            padding: "4px 10px",
+                            fontSize: "11px",
+                            background: "rgba(255,77,106,.1)",
+                            border: "1px solid rgba(255,77,106,.2)",
+                            color: "#ff4d6a",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                            fontFamily: "Inter",
+                            fontWeight: 600,
+                          }}
+                          onClick={() =>
+                            setDeleteId(variants.map((v) => v._id).join(","))
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Direct Products */}
+      <div className="card mt-[14px]">
+        <div
+          className="p-[14px] border-b"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <div
+            className="font-inter font-bold text-[14px]"
+            style={{ color: "var(--text-primary)" }}
+          >
+            Single Products
+          </div>
+        </div>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: "40px" }}>#</th>
+                <th>Name</th>
+                <th>SKU</th>
+                <th>Price</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="text-center py-8"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Loading...
+                  </td>
+                </tr>
+              ) : directProducts.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="text-center py-8"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    No direct products found
+                  </td>
+                </tr>
+              ) : (
+                directProducts.map((p, index) => (
+                  <tr key={p._id}>
+                    <td style={{ color: "var(--text-muted)" }}>{index + 1}</td>
+                    <td
+                      style={{ color: "var(--text-primary)", fontWeight: 600 }}
+                    >
+                      {p.name}
+                    </td>
+                    <td style={{ color: "var(--text-secondary)" }}>{p.sku}</td>
+                    <td>
+                      <span
+                        className="font-inter font-bold text-[13px]"
+                        style={{ color: "var(--electric-bright)" }}
+                      >
+                        PKR {p.price.toLocaleString()}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-[6px] whitespace-nowrap">
+                        <button
+                          className="btn btn-ghost"
+                          style={{ padding: "4px 10px", fontSize: "11px" }}
+                          onClick={() => {
+                            setEditProduct(p);
+                            setEditVariants(null);
+                            setModalOpen(true);
+                          }}
                         >
                           Edit
                         </button>
@@ -298,7 +516,7 @@ function Products() {
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Modal */}
       {deleteId && (
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center p-4"
@@ -315,7 +533,6 @@ function Products() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Icon */}
             <div className="flex flex-col items-center text-center p-[28px_24px_20px]">
               <div
                 className="w-12 h-12 rounded-full flex items-center justify-center mb-4"
@@ -348,12 +565,11 @@ function Products() {
                 className="text-[13px]"
                 style={{ color: "var(--text-secondary)" }}
               >
-                This product will be marked as inactive and won't appear in the
-                list anymore.
+                {deleteId?.includes(",")
+                  ? "All model variants of this product will be permanently deleted."
+                  : "This product will be permanently deleted."}
               </div>
             </div>
-
-            {/* Buttons */}
             <div className="flex gap-[9px] p-[0_24px_24px]">
               <button
                 className="btn btn-ghost flex-1 justify-center"
@@ -388,9 +604,14 @@ function Products() {
       {/* Modal */}
       <ProductModal
         isOpen={modalOpen}
-        onClose={handleModalClose}
-        onSuccess={fetchProducts}
-        product={editProduct}
+        onClose={() => {
+          setModalOpen(false);
+          setEditProduct(null);
+          setEditVariants(null);
+        }}
+        onSaved={fetchProducts}
+        product={editProduct ?? undefined}
+        allVariants={editVariants ?? undefined}
       />
     </div>
   );

@@ -1,14 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { getProductsAPI } from "../../api/products";
-
-interface Product {
-  _id: string;
-  name: string;
-  sku: string;
-  price: number;
-  category: string;
-}
+import { getProductsAPI, type Product } from "../../api/products";
 
 interface ProductSearchProps {
   onAdd: (product: Product, quantity: number) => void;
@@ -51,10 +43,15 @@ function ProductSearch({ onAdd }: ProductSearchProps) {
   };
 
   useEffect(() => {
+    if (!token) {
+      setResults([]);
+      return;
+    }
+
     const timeout = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const data = await getProductsAPI(token!, {
+        const data = await getProductsAPI(token, {
           q: query || undefined,
           isActive: true,
           limit: 10,
@@ -212,7 +209,7 @@ function ProductSearch({ onAdd }: ProductSearchProps) {
                           className="text-[10px]"
                           style={{ color: "var(--text-secondary)" }}
                         >
-                          {p.sku} · {p.category}
+                          {p.sku} · {(p.model || "NO MODEL").replace(/_/g, " ")}
                         </div>
                       </div>
                       <div
