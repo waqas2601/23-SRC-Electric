@@ -232,10 +232,10 @@ function CustomerSearch({
       {isOpen && (
         <div
           style={{
-            position: "fixed",
-            top: dropdownPos.top,
-            left: dropdownPos.left,
-            width: dropdownPos.width,
+            position: "rela",
+            top: "100%",
+            left: 0,
+            right: 0,
             zIndex: 9999,
             background: "var(--bg-card)",
             border: "1px solid var(--border)",

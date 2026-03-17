@@ -232,24 +232,6 @@ function Products() {
         ))}
       </div>
 
-      {(activeTypeFilter === "" || activeTypeFilter === "model") && (
-        <div className="flex gap-[7px] flex-wrap mb-[14px]">
-          <Chip
-            label="All Models"
-            active={activeModelFilter === ""}
-            onClick={() => setActiveModelFilter("")}
-          />
-          {modelLabels.map((m) => (
-            <Chip
-              key={m}
-              label={formatModel(m)}
-              active={activeModelFilter === m}
-              onClick={() => setActiveModelFilter(m)}
-            />
-          ))}
-        </div>
-      )}
-
       {/* Model Products */}
       <div className="card">
         <div
@@ -262,15 +244,6 @@ function Products() {
           >
             Model Based Products
           </div>
-          {modelLabels.length > 0 && (
-            <div className="flex flex-wrap gap-[6px] mt-[8px]">
-              {modelLabels.map((m) => (
-                <span key={m} className="chip">
-                  {formatModel(m)}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
         <div className="tbl-wrap">
           <table className="tbl tbl-products">
@@ -281,7 +254,7 @@ function Products() {
                 {modelLabels.map((m) => (
                   <th key={m}>{formatModel(m)}</th>
                 ))}
-                <th>Actions</th>
+                <th style={{ width: "120px" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -371,7 +344,7 @@ function Products() {
                     })}
 
                     <td>
-                      <div className="flex items-center gap-[6px] whitespace-nowrap">
+                      <div className="inline-flex items-center gap-[6px] whitespace-nowrap">
                         <button
                           className="btn btn-ghost"
                           style={{ padding: "4px 10px", fontSize: "11px" }}
@@ -432,7 +405,7 @@ function Products() {
                 <th>Name</th>
                 <th>SKU</th>
                 <th>Price</th>
-                <th>Actions</th>
+                <th style={{ width: "120px" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -475,7 +448,7 @@ function Products() {
                       </span>
                     </td>
                     <td>
-                      <div className="flex items-center gap-[6px] whitespace-nowrap">
+                      <div className="inline-flex gap-[6px] whitespace-nowrap">
                         <button
                           className="btn btn-ghost"
                           style={{ padding: "4px 10px", fontSize: "11px" }}

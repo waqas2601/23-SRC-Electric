@@ -52,12 +52,16 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
         width: "240px",
         background: "var(--bg-sidebar)",
         borderRight: "1px solid var(--border)",
+        boxSizing: "border-box",
       }}
       id="sidebar"
     >
       <div
-        className="flex items-center gap-3 p-[18px_18px_14px]"
-        style={{ borderBottom: "1px solid var(--border)" }}
+        className="flex items-center gap-3 p-[12px_18px_12px]"
+        style={{
+          borderBottom: "1px solid var(--border)",
+          boxSizing: "border-box",
+        }}
       >
         <img
           src="/logo.png"

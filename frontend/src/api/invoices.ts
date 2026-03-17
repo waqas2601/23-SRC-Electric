@@ -43,7 +43,7 @@ export async function addInvoiceAPI(
   token: string,
   data: {
     customerId: string;
-    invoiceDate: string;
+    invoiceDate?: string;
     discount?: number;
     notes?: string;
     items: {

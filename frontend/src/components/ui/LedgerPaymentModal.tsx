@@ -16,7 +16,6 @@ interface LedgerPaymentModalProps {
     customerId: string;
     amount: number;
     method: "CASH" | "BANK" | "OTHER";
-    paymentDate: string;
     notes?: string;
   }) => Promise<void>;
 }
@@ -39,9 +38,7 @@ function LedgerPaymentModal({
 
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<"CASH" | "BANK" | "OTHER">("CASH");
-  const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().split("T")[0],
-  );
+  // Payment date removed, backend handles it
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
 
@@ -75,7 +72,7 @@ function LedgerPaymentModal({
       setSelectedCustomer(null);
       setAmount("");
       setMethod("CASH");
-      setPaymentDate(new Date().toISOString().split("T")[0]);
+      // setPaymentDate removed
       setNotes("");
       setError("");
       setShowResults(false);
@@ -118,7 +115,6 @@ function LedgerPaymentModal({
       customerId: selectedCustomer._id,
       amount: amountNum,
       method,
-      paymentDate,
       notes: notes.trim() || undefined,
     });
   };
@@ -293,20 +289,7 @@ function LedgerPaymentModal({
           </div>
         </div>
 
-        <div>
-          <label
-            className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            Payment Date
-          </label>
-          <input
-            className="fi"
-            type="date"
-            value={paymentDate}
-            onChange={(e) => setPaymentDate(e.target.value)}
-          />
-        </div>
+        <div>{/* Payment Date field removed, backend handles it */}</div>
 
         <div>
           <label

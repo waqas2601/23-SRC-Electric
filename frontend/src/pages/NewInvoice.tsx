@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { addInvoiceAPI } from "../api/invoices";
@@ -48,14 +48,15 @@ function mixProductsByModel(items: Product[]) {
 }
 
 function NewInvoice() {
+  // Model selection state
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const { token } = useAuth();
   const navigate = useNavigate();
   const { showToast } = useToast();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(
-    new Date().toISOString().split("T")[0],
-  );
+  // Invoice date removed, backend will handle
   const [discountType, setDiscountType] = useState<"PKR" | "PERCENT">("PKR");
   const [discountValue, setDiscountValue] = useState(0);
   const [discountInput, setDiscountInput] = useState("");
@@ -100,6 +101,21 @@ function NewInvoice() {
     ),
   );
   const grandTotal = Math.max(0, subtotal - discount);
+
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (
+        composerRef.current &&
+        !composerRef.current.contains(e.target as Node)
+      ) {
+        setShowItemResults(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -169,11 +185,33 @@ function NewInvoice() {
     setShowItemResults(false);
     setDraftQty(1);
     setDraftBoxQty("");
+    // Reset model selection
+    if (product.type === "model") {
+      setSelectedModel(null);
+      // Fetch available models
+      if (token) {
+        import("../api/products").then(({ getProductModelsAPI }) => {
+          getProductModelsAPI(token)
+            .then((res) => {
+              setAvailableModels(res.models);
+            })
+            .catch(() => setAvailableModels([]));
+        });
+      }
+    } else {
+      setSelectedModel(product.model ?? null);
+      setAvailableModels([]);
+    }
   };
 
   const handleAddItem = () => {
     if (!selectedProduct) {
       setError("Please select an item first");
+      return;
+    }
+    // If product is model type, require model selection
+    if (selectedProduct.type === "model" && !selectedModel) {
+      setError("Please select a model for this product");
       return;
     }
 
@@ -184,7 +222,15 @@ function NewInvoice() {
     }
 
     const boxQty = parsed === "" ? null : Math.max(0, Number(parsed));
-    upsertProductItem(selectedProduct, draftQty, boxQty);
+    // Use selectedModel if present
+    const productToAdd = {
+      ...selectedProduct,
+      model:
+        selectedProduct.type === "model"
+          ? selectedModel
+          : (selectedProduct.model ?? null),
+    };
+    upsertProductItem(productToAdd, draftQty, boxQty);
 
     setError("");
     setSelectedProduct(null);
@@ -192,6 +238,8 @@ function NewInvoice() {
     setDraftQty(1);
     setDraftBoxQty("");
     setShowItemResults(false);
+    setSelectedModel(null);
+    setAvailableModels([]);
   };
 
   const handleSubmit = async () => {
@@ -247,7 +295,7 @@ function NewInvoice() {
 
       await addInvoiceAPI(token, {
         customerId,
-        invoiceDate,
+        invoiceDate: new Date().toISOString(),
         discount,
         notes,
         items: items.map((item) => ({
@@ -332,20 +380,7 @@ function NewInvoice() {
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px] p-[16px]">
-              <div>
-                <label
-                  className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Invoice Date
-                </label>
-                <input
-                  className="fi"
-                  type="date"
-                  value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
-                />
-              </div>
+              {/* Invoice Date field removed */}
               <div className="sm:col-span-2">
                 <label
                   className="block text-[10px] uppercase tracking-[.1em] mb-[6px] font-inter font-semibold"
@@ -391,6 +426,7 @@ function NewInvoice() {
             <div className="p-[17px] flex flex-col gap-[14px]">
               {/* Item Composer */}
               <div
+                ref={composerRef}
                 className="rounded-xl p-[13px] relative z-[30]"
                 style={{ border: "1px solid var(--border)" }}
               >
@@ -404,6 +440,7 @@ function NewInvoice() {
                       setItemQuery(e.target.value);
                       setSelectedProduct(null);
                       setShowItemResults(true);
+                      setSelectedModel(null);
                     }}
                     style={{
                       borderColor: selectedProduct
@@ -411,9 +448,54 @@ function NewInvoice() {
                         : "var(--border-input)",
                     }}
                   />
+                  {/* Model selection dropdown if product is model type */}
+                  {selectedProduct &&
+                    selectedProduct.type === "model" &&
+                    itemResults.length > 0 &&
+                    (() => {
+                      // Build modelPrices map for selected product
+                      const modelPrices: { [model: string]: number } = {};
+                      itemResults.forEach((item) => {
+                        if (
+                          item.name === selectedProduct.name &&
+                          item.model &&
+                          typeof item.price === "number"
+                        ) {
+                          modelPrices[item.model] = item.price;
+                        }
+                      });
+                      const models = Object.keys(modelPrices);
+                      if (models.length === 0) return null;
+                      return (
+                        <div className="mt-3" style={{ maxWidth: "220px" }}>
+                          <label
+                            className="block text-[11px] uppercase tracking-[.08em] mb-2"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            Select Model
+                          </label>
+                          <select
+                            className="fi"
+                            value={selectedModel ?? ""}
+                            onChange={(e) => setSelectedModel(e.target.value)}
+                          >
+                            <option value="">Select model...</option>
+                            {models.map((m) => (
+                              <option
+                                key={selectedProduct?.name + "-" + m}
+                                value={m}
+                              >
+                                {m.replace(/_/g, " ")} — PKR{" "}
+                                {modelPrices[m]?.toLocaleString()}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })()}
                   {(itemQuery || selectedProduct) && (
                     <button
-                      className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
+                      className="absolute right-3 top-[11px] w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
                       style={{
                         background: "rgba(255,77,106,.18)",
                         border: "none",
@@ -459,42 +541,49 @@ function NewInvoice() {
                           No items found
                         </div>
                       ) : (
-                        itemResults.map((p) => (
-                          <button
-                            key={p._id}
-                            className="w-full text-left px-3 py-3 transition-colors"
-                            style={{
-                              background: "transparent",
-                              border: "none",
-                              borderBottom: "1px solid var(--border)",
-                              cursor: "pointer",
-                              color: "var(--text-primary)",
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background =
-                                "var(--electric-glow)";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = "transparent";
-                            }}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              handleSelectProduct(p);
-                            }}
-                          >
-                            <div className="text-[13px] font-semibold">
-                              {p.name}
-                            </div>
-                            <div
-                              className="text-[11px]"
-                              style={{ color: "var(--text-secondary)" }}
-                            >
-                              {p.sku} ·{" "}
-                              {(p.model || "NO MODEL").replace(/_/g, " ")} · PKR{" "}
-                              {p.price.toLocaleString()}
-                            </div>
-                          </button>
-                        ))
+                        (() => {
+                          // Only show unique product names
+                          const uniqueNames = Array.from(
+                            new Set(itemResults.map((p) => p.name)),
+                          );
+                          return uniqueNames.map((name) => {
+                            const product = itemResults.find(
+                              (p) => p.name === name,
+                            );
+                            // Use product._id if available, else fallback to name
+                            const key =
+                              product && product._id ? product._id : name;
+                            return (
+                              <button
+                                key={key}
+                                className="w-full text-left px-3 py-3 transition-colors"
+                                style={{
+                                  background: "transparent",
+                                  border: "none",
+                                  borderBottom: "1px solid var(--border)",
+                                  cursor: "pointer",
+                                  color: "var(--text-primary)",
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background =
+                                    "var(--electric-glow)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background =
+                                    "transparent";
+                                }}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  if (product) handleSelectProduct(product);
+                                }}
+                              >
+                                <div className="text-[13px] font-semibold">
+                                  {name}
+                                </div>
+                              </button>
+                            );
+                          });
+                        })()
                       )}
                     </div>
                   )}
@@ -587,17 +676,6 @@ function NewInvoice() {
                 </div>
               </div>
 
-              {showItemResults && (
-                <div
-                  className="fixed inset-0 z-[20]"
-                  style={{
-                    background: "rgba(0,0,0,0.35)",
-                    backdropFilter: "blur(4px)",
-                  }}
-                  onClick={() => setShowItemResults(false)}
-                />
-              )}
-
               {/* Static Items List */}
               {items.length === 0 ? (
                 <div
@@ -615,7 +693,7 @@ function NewInvoice() {
                   <div className="md:hidden flex flex-col gap-[8px]">
                     {items.map((item, i) => (
                       <div
-                        key={i}
+                        key={item.productId + "-" + (item.productModel || "")}
                         className="rounded-lg px-[13px] py-[12px] flex items-center justify-between gap-3"
                         style={{
                           background: "var(--bg-input)",
@@ -701,6 +779,7 @@ function NewInvoice() {
 
                     {items.map((item, i) => (
                       <div
+                        key={item.productId + "-" + (item.productModel || "")}
                         className="grid px-[14px] py-[12px] items-center"
                         style={{
                           gridTemplateColumns: "2fr 1fr 0.9fr 1.1fr 1.2fr 70px",

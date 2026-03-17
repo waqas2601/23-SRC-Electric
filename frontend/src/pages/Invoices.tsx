@@ -170,9 +170,9 @@ function Invoices() {
         </div>
       )}
 
-      {/* Snapshot */}
+      {/* Snapshot - Only Total and Amount */}
       {!isLoading && invoices.length > 0 && (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-[10px] mb-[14px]">
+        <div className="grid grid-cols-2 lg:grid-cols-2 gap-[10px] mb-[14px]">
           <div className="card p-[10px_12px]">
             <div
               className="text-[10px]"
@@ -188,48 +188,6 @@ function Invoices() {
             </div>
           </div>
           <div className="card p-[10px_12px]">
-            <div
-              className="text-[10px]"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Paid
-            </div>
-            <div
-              className="font-inter font-bold text-[16px]"
-              style={{ color: "#00c97a" }}
-            >
-              {stats.paid}
-            </div>
-          </div>
-          <div className="card p-[10px_12px]">
-            <div
-              className="text-[10px]"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Partial
-            </div>
-            <div
-              className="font-inter font-bold text-[16px]"
-              style={{ color: "#ffb020" }}
-            >
-              {stats.partial}
-            </div>
-          </div>
-          <div className="card p-[10px_12px]">
-            <div
-              className="text-[10px]"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Unpaid
-            </div>
-            <div
-              className="font-inter font-bold text-[16px]"
-              style={{ color: "#ff4d6a" }}
-            >
-              {stats.unpaid}
-            </div>
-          </div>
-          <div className="card p-[10px_12px] col-span-2 lg:col-span-1">
             <div
               className="text-[10px]"
               style={{ color: "var(--text-secondary)" }}
@@ -286,7 +244,6 @@ function Invoices() {
                     {formatDate(inv.invoice_date)}
                   </div>
                 </div>
-                <Badge status={statusMap[inv.status]} />
               </div>
 
               <div
@@ -359,9 +316,6 @@ function Invoices() {
                 <th>Customer</th>
                 <th>Date</th>
                 <th>Total</th>
-                <th>Paid</th>
-                <th>Remaining</th>
-                <th>Status</th>
                 <th></th>
               </tr>
             </thead>
@@ -415,18 +369,6 @@ function Invoices() {
                     </td>
                     <td className="font-inter font-semibold">
                       PKR {inv.total_amount.toLocaleString()}
-                    </td>
-                    <td style={{ color: "#00c97a" }}>
-                      PKR {inv.paid_amount.toLocaleString()}
-                    </td>
-                    <td
-                      className="font-inter font-semibold"
-                      style={{ color: remainingColor[inv.status] }}
-                    >
-                      PKR {inv.remaining_amount.toLocaleString()}
-                    </td>
-                    <td>
-                      <Badge status={statusMap[inv.status]} />
                     </td>
                     <td>
                       <div className="flex items-center gap-[6px] whitespace-nowrap">

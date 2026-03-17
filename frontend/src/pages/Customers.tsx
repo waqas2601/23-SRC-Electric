@@ -170,7 +170,7 @@ function Customers() {
                 <th>Phone</th>
                 <th>Address</th>
                 <th>Notes</th>
-                <th>Status</th>
+                {/* Status column removed */}
                 <th></th>
               </tr>
             </thead>
@@ -253,9 +253,7 @@ function Customers() {
                         {c.notes ?? "—"}
                       </div>
                     </td>
-                    <td>
-                      <Badge status={c.payment_status ?? "clear"} />
-                    </td>
+                    {/* Status cell removed */}
                     <td>
                       <div className="flex items-center gap-[6px] whitespace-nowrap">
                         <button

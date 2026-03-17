@@ -5,12 +5,21 @@ import { useState } from "react";
 
 function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [theme, setTheme] = useState("dark");
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem("theme") || "dark";
+  });
 
   const toggleTheme = (t: string) => {
     setTheme(t);
     document.documentElement.setAttribute("data-theme", t);
+    localStorage.setItem("theme", t);
   };
+
+  // Ensure theme is applied on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useState(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  });
 
   return (
     <div

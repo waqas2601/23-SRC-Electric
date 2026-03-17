@@ -412,29 +412,7 @@ function ProductModal({
               ))}
             </div>
 
-            {entries.some((e) => e.model && e.price) && (
-              <div
-                className="mt-[10px] p-[10px_12px] rounded-lg flex flex-wrap gap-[8px]"
-                style={{
-                  background: "var(--electric-glow)",
-                  border: "1px solid var(--border)",
-                }}
-              >
-                {entries
-                  .filter((e) => e.model && e.price)
-                  .map((e, i) => (
-                    <div key={i} className="flex items-center gap-[6px]">
-                      <span className="chip">{formatModel(e.model)}</span>
-                      <span
-                        className="text-[12px] font-inter font-bold"
-                        style={{ color: "var(--electric-bright)" }}
-                      >
-                        PKR {Number(e.price).toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            )}
+            {/* Model detail summary removed as requested */}
           </div>
         )}
 

@@ -19,6 +19,7 @@ const PAGE_INFO: Record<string, { title: string; sub: string }> = {
 function Header({ onMenuClick, theme, onThemeChange }: HeaderProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const showNewInvoiceButton = location.pathname !== "/products";
   const info = location.pathname.startsWith("/ledger/")
     ? { title: "Ledger Detail", sub: "Customer ledger statement" }
     : (PAGE_INFO[location.pathname] ?? { title: "SRC Electric", sub: "" });
@@ -27,9 +28,11 @@ function Header({ onMenuClick, theme, onThemeChange }: HeaderProps) {
     <header
       className="flex items-center gap-[10px] px-[22px] sticky top-0 z-50 backdrop-blur-[10px]"
       style={{
-        height: "var(--hh)",
+        height: "60px",
+        minHeight: "60px",
         borderBottom: "1px solid var(--border)",
         background: "var(--bg-header)",
+        boxSizing: "border-box",
       }}
     >
       {/* Hamburger */}
@@ -110,24 +113,7 @@ function Header({ onMenuClick, theme, onThemeChange }: HeaderProps) {
         </button>
       </div>
 
-      {/* New Invoice Button */}
-      <button
-        onClick={() => navigate("/new-invoice")}
-        className="btn btn-primary"
-      >
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-        >
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-        <span className="hidden sm:inline">New Invoice</span>
-      </button>
+      {/* New Invoice Button removed from all pages */}
     </header>
   );
 }

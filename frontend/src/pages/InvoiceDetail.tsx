@@ -109,6 +109,7 @@ function InvoiceDetail() {
   const [discountType, setDiscountType] = useState<"PKR" | "PERCENT">("PKR");
   const [discountValue, setDiscountValue] = useState(0);
   const [discountInput, setDiscountInput] = useState("");
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
 
   const fetchInvoice = useCallback(async () => {
     if (!token || !id) {
@@ -240,10 +241,28 @@ function InvoiceDetail() {
     setShowItemResults(false);
     setDraftQty(1);
     setDraftBoxQty("");
+    // Model dropdown logic
+    if (product.type === "model") {
+      // Find all models for this product name
+      const models = itemResults
+        .filter((p) => p.name === product.name && p.model)
+        .map((p) => p.model);
+      setSelectedModel(null);
+      // Optionally: auto-select if only one model
+      if (models.length === 1) setSelectedModel(models[0] ?? null);
+    } else {
+      setSelectedModel(product.model ?? null);
+    }
   };
 
   const handleAppendItem = async () => {
     if (!token || !invoice || !selectedProduct || appendLoading) return;
+
+    const variants = itemResults.filter((p) => p.name === selectedProduct.name);
+    if (variants.length > 1 && !selectedModel) {
+      showToast("error", "Please select a model first");
+      return;
+    }
 
     const parsed = draftBoxQty.trim();
     if (parsed !== "" && Number.isNaN(Number(parsed))) {
@@ -273,6 +292,7 @@ function InvoiceDetail() {
       setDraftQty(1);
       setDraftBoxQty("");
       setShowItemResults(false);
+      setSelectedModel(null);
       await fetchInvoice();
     } catch (err: any) {
       showToast("error", err.message || "Failed to add item");
@@ -280,7 +300,6 @@ function InvoiceDetail() {
       setAppendLoading(false);
     }
   };
-
   const handleUpdateDiscount = async () => {
     if (!token || !invoice || discountSaving) return;
 
@@ -307,6 +326,7 @@ function InvoiceDetail() {
       });
       showToast("success", "Discount updated successfully");
       await fetchInvoice();
+      setShowDiscountEditor(false); // Close editor after saving
     } catch (err: any) {
       showToast("error", err.message || "Failed to update discount");
     } finally {
@@ -591,21 +611,26 @@ function InvoiceDetail() {
                   onClick={() => {
                     if (!showDiscountEditor) {
                       setDiscountType("PKR");
-                      setDiscountValue(0);
+                      setDiscountValue(invoice.discount ?? 0);
                       setDiscountInput("");
                       setShowDiscountEditor(true);
                       return;
                     }
                     void handleUpdateDiscount();
                   }}
-                  disabled={discountSaving}
+                  disabled={
+                    discountSaving ||
+                    (invoice && invoice.discount > 0 && !showDiscountEditor)
+                  }
                   style={{ fontSize: "12px", padding: "6px 10px" }}
                 >
                   {discountSaving
                     ? "Saving..."
                     : showDiscountEditor
                       ? "Save Discount"
-                      : "Add Discount"}
+                      : invoice && invoice.discount > 0
+                        ? "Discount Applied"
+                        : "Add Discount"}
                 </button>
                 {showDiscountEditor && (
                   <button
@@ -647,6 +672,7 @@ function InvoiceDetail() {
 
           <div className="card p-0 overflow-hidden">
             {invoice.items?.length ? (
+              // Show items in the order they are in the array (oldest first, newest last)
               invoice.items.map((item, idx) => (
                 <div
                   key={item._id || `${item.sku_snapshot}-${idx}`}
@@ -701,10 +727,14 @@ function InvoiceDetail() {
 
           <div className="card p-[12px]" style={{ overflow: "visible" }}>
             <div
-              className="rounded-xl p-[13px] relative z-[30] flex flex-col gap-[10px]"
-              style={{ border: "1px solid var(--border)" }}
+              className="rounded-xl p-[13px] relative z-[30]"
+              style={{
+                border: "1px solid var(--border)",
+                position: "relative",
+                overflow: "hidden",
+              }}
             >
-              <div className="relative">
+              <div className="relative" style={{ overflow: "visible" }}>
                 <input
                   className="fi pr-10"
                   placeholder="Search item"
@@ -714,6 +744,7 @@ function InvoiceDetail() {
                     setItemQuery(e.target.value);
                     setSelectedProduct(null);
                     setShowItemResults(true);
+                    setSelectedModel(null);
                   }}
                   style={{
                     borderColor: selectedProduct
@@ -722,9 +753,62 @@ function InvoiceDetail() {
                   }}
                 />
 
+                {/* Model selector — only when product has multiple models */}
+                {selectedProduct &&
+                  selectedProduct.type === "model" &&
+                  (() => {
+                    const modelPrices: { [model: string]: number } = {};
+                    itemResults.forEach((item) => {
+                      if (
+                        item.name === selectedProduct.name &&
+                        item.model &&
+                        typeof item.price === "number"
+                      ) {
+                        modelPrices[item.model] = item.price;
+                      }
+                    });
+                    const models = Object.keys(modelPrices);
+                    if (models.length === 0) return null;
+                    return (
+                      <div className="mt-3" style={{ maxWidth: "220px" }}>
+                        <label
+                          className="block text-[11px] uppercase tracking-[.08em] mb-2"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          Select Model
+                        </label>
+                        <select
+                          className="fi"
+                          value={selectedModel ?? ""}
+                          onChange={(e) => {
+                            const m = e.target.value;
+                            setSelectedModel(m);
+                            const matched = itemResults.find(
+                              (p) =>
+                                p.name === selectedProduct.name &&
+                                p.model === m,
+                            );
+                            if (matched) setSelectedProduct(matched);
+                          }}
+                        >
+                          <option value="">Select model...</option>
+                          {models.map((m) => (
+                            <option
+                              key={selectedProduct?.name + "-" + m}
+                              value={m}
+                            >
+                              {m.replace(/_/g, " ")} — PKR{" "}
+                              {modelPrices[m]?.toLocaleString()}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
+
                 {(itemQuery || selectedProduct) && (
                   <button
-                    className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
+                    className="absolute right-3 top-[11px] w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
                     style={{
                       background: "rgba(255,77,106,.18)",
                       border: "none",
@@ -736,6 +820,7 @@ function InvoiceDetail() {
                       setItemQuery("");
                       setSelectedProduct(null);
                       setShowItemResults(false);
+                      setSelectedModel(null);
                     }}
                     aria-label="Clear selected item"
                   >
@@ -750,9 +835,10 @@ function InvoiceDetail() {
                       background: "var(--bg-card)",
                       border: "1px solid var(--border)",
                       zIndex: 40,
-                      maxHeight: 220,
+                      maxHeight: 380,
                       overflowY: "auto",
-                      paddingBottom: 4,
+                      paddingBottom: 6,
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
                     }}
                   >
                     {itemLoading ? (
@@ -770,48 +856,52 @@ function InvoiceDetail() {
                         No items found
                       </div>
                     ) : (
-                      itemResults.map((p) => (
-                        <button
-                          key={p._id}
-                          className="w-full text-left px-3 py-3 transition-colors"
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            borderBottom: "1px solid var(--border)",
-                            cursor: "pointer",
-                            color: "var(--text-primary)",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background =
-                              "var(--electric-glow)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = "transparent";
-                          }}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            handleSelectProduct(p);
-                          }}
-                        >
-                          <div className="text-[13px] font-semibold">
-                            {p.name}
-                          </div>
-                          <div
-                            className="text-[11px]"
-                            style={{ color: "var(--text-secondary)" }}
-                          >
-                            {p.sku} ·{" "}
-                            {(p.model || "NO MODEL").replace(/_/g, " ")} · PKR{" "}
-                            {p.price.toLocaleString()}
-                          </div>
-                        </button>
-                      ))
+                      (() => {
+                        const uniqueNames = Array.from(
+                          new Set(itemResults.map((p) => p.name)),
+                        );
+                        return uniqueNames.map((name) => {
+                          const product = itemResults.find(
+                            (p) => p.name === name,
+                          );
+                          const key = product?._id ?? name;
+                          return (
+                            <button
+                              key={key}
+                              className="w-full text-left px-3 py-3 transition-colors"
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                borderBottom: "1px solid var(--border)",
+                                cursor: "pointer",
+                                color: "var(--text-primary)",
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background =
+                                  "var(--electric-glow)";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background =
+                                  "transparent";
+                              }}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (product) handleSelectProduct(product);
+                              }}
+                            >
+                              <div className="text-[13px] font-semibold">
+                                {name}
+                              </div>
+                            </button>
+                          );
+                        });
+                      })()
                     )}
                   </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-[10px]">
+              <div className="grid grid-cols-2 gap-3 mt-3">
                 <div>
                   <div
                     className="text-[11px] uppercase tracking-[.08em] mb-2"
@@ -859,7 +949,7 @@ function InvoiceDetail() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-[10px]">
+              <div className="grid grid-cols-2 gap-3 mt-3">
                 <div>
                   <div
                     className="text-[11px] uppercase tracking-[.08em] mb-2"
@@ -887,21 +977,25 @@ function InvoiceDetail() {
                 </div>
               </div>
 
-              <button
-                className="btn btn-primary w-full justify-center"
-                onClick={handleAppendItem}
-                disabled={!selectedProduct || appendLoading}
-                style={{ opacity: !selectedProduct || appendLoading ? 0.7 : 1 }}
-              >
-                {appendLoading ? (
-                  <>
-                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    Adding...
-                  </>
-                ) : (
-                  "+ Add Item to List"
-                )}
-              </button>
+              <div className="mt-3">
+                <button
+                  className="btn btn-primary w-full justify-center"
+                  onClick={handleAppendItem}
+                  disabled={!selectedProduct || appendLoading}
+                  style={{
+                    opacity: !selectedProduct || appendLoading ? 0.7 : 1,
+                  }}
+                >
+                  {appendLoading ? (
+                    <>
+                      <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    "+ Add Item to List"
+                  )}
+                </button>
+              </div>
             </div>
 
             {showItemResults && (
