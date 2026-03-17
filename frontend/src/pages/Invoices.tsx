@@ -70,11 +70,15 @@ function Invoices() {
     setIsLoading(true);
     setError("");
     try {
-      const data = await getInvoicesAPI(token, {
-        status: activeFilter || undefined,
-        limit: 50,
-      });
-      setInvoices(data.items ?? []);
+      const all: Invoice[] = [];
+      let page = 1, totalPages = 1;
+      while (page <= totalPages) {
+        const data = await getInvoicesAPI(token, { status: activeFilter || undefined, page, limit: 100 });
+        all.push(...(data.items ?? []));
+        totalPages = data.pagination?.totalPages ?? 1;
+        page += 1;
+      }
+      setInvoices(all);
     } catch (err: any) {
       const message = err.message || "Failed to load invoices";
       setError(message);

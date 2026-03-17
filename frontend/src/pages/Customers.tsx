@@ -47,11 +47,15 @@ function Customers() {
     setIsLoading(true);
     setError("");
     try {
-      const data = await getCustomersAPI(token, {
-        q: search || undefined,
-        limit: 50,
-      });
-      setCustomers(data.items ?? []);
+      const all: typeof customers = [];
+      let page = 1, totalPages = 1;
+      while (page <= totalPages) {
+        const data = await getCustomersAPI(token, { q: search || undefined, page, limit: 100 });
+        all.push(...(data.items ?? []));
+        totalPages = data.pagination?.totalPages ?? 1;
+        page += 1;
+      }
+      setCustomers(all);
     } catch (err: any) {
       const message = err.message || "Failed to load customers";
       setError(message);

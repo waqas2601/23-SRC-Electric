@@ -51,12 +51,15 @@ function Products() {
     setIsLoading(true);
     setError("");
     try {
-      const data = await getProductsAPI(token, {
-        q: search || undefined,
-        isActive: true,
-        limit: 100,
-      });
-      setProducts(data.items ?? []);
+      const all: Product[] = [];
+      let page = 1, totalPages = 1;
+      while (page <= totalPages) {
+        const data = await getProductsAPI(token, { q: search || undefined, isActive: true, page, limit: 100 });
+        all.push(...(data.items ?? []));
+        totalPages = data.pagination?.totalPages ?? 1;
+        page += 1;
+      }
+      setProducts(all);
     } catch (err: any) {
       const message = err.message || "Failed to load products";
       setError(message);
