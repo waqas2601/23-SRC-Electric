@@ -224,6 +224,9 @@ function InvoiceDetail() {
       subtotal: invoice.subtotal ?? 0,
       discount: invoice.discount ?? 0,
       total: invoice.total_amount ?? 0,
+      paidAmount: invoice.paid_amount,
+      remainingAmount: invoice.remaining_amount,
+      notes: invoice.notes,
       items: (invoice.items ?? []).map((item) => ({
         productName: item.product_name_snapshot,
         sku: item.sku_snapshot,

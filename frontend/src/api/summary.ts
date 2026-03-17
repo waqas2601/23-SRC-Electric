@@ -21,3 +21,16 @@ export async function getSummaryAPI(
   if (!res.ok) throw new Error("Failed to fetch summary");
   return res.json();
 }
+
+export async function getLedgerSummaryAPI(token: string): Promise<{
+  total_receivable: number;
+  total_paid: number;
+  total_outstanding: number;
+  customers_with_balance: number;
+}> {
+  const res = await fetch(`${API_URL}/summary/ledger`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to fetch ledger summary");
+  return res.json();
+}

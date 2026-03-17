@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { getCustomersAPI, type Customer } from "../api/customers";
+import { getCustomerByIdAPI, getCustomersAPI, type Customer } from "../api/customers";
+import { getInvoicesAPI } from "../api/invoices";
+import { getCustomerLedgerPaymentsAPI } from "../api/ledgerPayments";
+import { downloadLedgerPdf } from "../utils/ledgerPdf";
+import { getLedgerSummaryAPI } from "../api/summary";
+import StatCard from "../components/ui/StatCard";
 
 function Ledger() {
   const { token } = useAuth();
@@ -11,6 +16,8 @@ function Ledger() {
   const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const [ledgerSummary, setLedgerSummary] = useState<{ total_receivable: number; total_paid: number; customers_with_balance: number } | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!token) {
@@ -22,6 +29,9 @@ function Ledger() {
     setIsLoading(true);
     setError("");
     try {
+      const summaryData = await getLedgerSummaryAPI(token);
+      setLedgerSummary(summaryData);
+
       const allCustomers: Customer[] = [];
       let cPage = 1;
       let cTotalPages = 1;
@@ -53,6 +63,84 @@ function Ledger() {
     });
   }, [customers, searchText]);
 
+  async function handlePrintPdf(customer: Customer) {
+    if (!token) return;
+    setPrintingId(customer._id);
+    try {
+      const [freshCustomer, paymentData] = await Promise.all([
+        getCustomerByIdAPI(token, customer._id),
+        getCustomerLedgerPaymentsAPI(token, customer._id),
+      ]);
+
+      const allInvoices: Array<{ invoice_no: string; invoice_date: string; total_amount: number }> = [];
+      let page = 1;
+      let totalPages = 1;
+      while (page <= totalPages) {
+        const data = await getInvoicesAPI(token, { customerId: customer._id, page, limit: 100 });
+        allInvoices.push(...((data.items ?? []) as typeof allInvoices));
+        totalPages = data.pagination?.totalPages ?? 1;
+        page += 1;
+      }
+
+      const opening = (freshCustomer as Customer).opening_balance ?? 0;
+      const totalInvoiced = allInvoices.reduce((s, i) => s + (i.total_amount ?? 0), 0);
+      const totalPaid = paymentData.reduce((s: number, p: { amount: number }) => s + (p.amount ?? 0), 0);
+      const totalOutstanding = opening + totalInvoiced;
+      const remaining = Math.max(0, totalOutstanding - totalPaid);
+
+      // Build rows — same logic as CustomerLedgerDetail.tsx
+      type TxnRow = { date?: string; description: string; debit: number; credit: number; type: string };
+      const txns: TxnRow[] = [];
+
+      txns.push({ description: "Opening Balance", debit: 0, credit: opening, type: "opening" });
+
+      allInvoices.forEach((inv) => {
+        txns.push({
+          date: inv.invoice_date,
+          description: `Inv #${inv.invoice_no}`,
+          debit: 0,
+          credit: inv.total_amount ?? 0,
+          type: "invoice",
+        });
+      });
+
+      paymentData.forEach((p: { payment_date: string; amount: number; method: string }) => {
+        txns.push({
+          date: p.payment_date,
+          description: `Payment (${p.method})`,
+          debit: p.amount ?? 0,
+          credit: 0,
+          type: "payment",
+        });
+      });
+
+      txns.sort((a, b) => {
+        if (a.type === "opening" && b.type !== "opening") return -1;
+        if (b.type === "opening" && a.type !== "opening") return 1;
+        const ta = new Date(a.date ?? 0).getTime();
+        const tb = new Date(b.date ?? 0).getTime();
+        if (ta !== tb) return ta - tb;
+        return a.type === "invoice" ? -1 : 1;
+      });
+
+      let running = 0;
+      const rows = txns.map((t) => {
+        running += t.credit - t.debit;
+        return { date: t.date, description: t.description, debit: t.debit, credit: t.credit, balance: running };
+      });
+
+      await downloadLedgerPdf({
+        customerName: (freshCustomer as Customer).name,
+        shopName: (freshCustomer as Customer).shop_name,
+        phone: (freshCustomer as Customer).phone,
+        rows,
+        totals: { opening, totalInvoiced, totalPaid, totalOutstanding, remaining },
+      });
+    } finally {
+      setPrintingId(null);
+    }
+  }
+
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
       <div className="flex items-center justify-between mb-[16px] flex-wrap gap-[10px]">
@@ -70,6 +158,50 @@ function Ledger() {
           onChange={(e) => setSearchText(e.target.value)}
         />
       </div>
+
+      {ledgerSummary && (
+        <div className="grid grid-cols-3 gap-[13px] mb-[16px]">
+          <StatCard
+            label="Total Receivable"
+            value={`PKR ${(ledgerSummary.total_receivable ?? 0).toLocaleString()}`}
+            change={`${ledgerSummary.customers_with_balance ?? 0} customers with balance`}
+            changeType="down"
+            accentColor="#1a6eff"
+            icon={
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1a6eff" strokeWidth="2">
+                <line x1="12" y1="1" x2="12" y2="23" />
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+              </svg>
+            }
+          />
+          <StatCard
+            label="Total Collected"
+            value={`PKR ${(ledgerSummary.total_paid ?? 0).toLocaleString()}`}
+            change="received via ledger payments"
+            changeType="up"
+            accentColor="#00c97a"
+            icon={
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00c97a" strokeWidth="2">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            }
+          />
+          <StatCard
+            label="Total Ledger"
+            value={`PKR ${((ledgerSummary.total_receivable ?? 0) + (ledgerSummary.total_paid ?? 0)).toLocaleString()}`}
+            change="receivable + collected"
+            changeType="neutral"
+            accentColor="#a855f7"
+            icon={
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+            }
+          />
+        </div>
+      )}
 
       {error && (
         <div
@@ -91,14 +223,15 @@ function Ledger() {
               <tr>
                 <th>S.No</th>
                 <th>Customer Name</th>
-                <th>DETAILS</th>
+                <th>Print PDF</th>
+                <th>Details</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
                   <td
-                    colSpan={3}
+                    colSpan={4}
                     className="text-center py-8"
                     style={{ color: "var(--text-muted)" }}
                   >
@@ -108,7 +241,7 @@ function Ledger() {
               ) : filteredCustomers.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={3}
+                    colSpan={4}
                     className="text-center py-8"
                     style={{ color: "var(--text-muted)" }}
                   >
@@ -129,6 +262,16 @@ function Ledger() {
                       >
                         {c.shop_name || "—"}
                       </div>
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ height: 30, padding: "0 12px", fontSize: 11 }}
+                        onClick={() => handlePrintPdf(c)}
+                        disabled={printingId === c._id}
+                      >
+                        {printingId === c._id ? "..." : "Print PDF"}
+                      </button>
                     </td>
                     <td>
                       <button

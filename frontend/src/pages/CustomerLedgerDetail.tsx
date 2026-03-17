@@ -15,6 +15,7 @@ import {
 } from "../api/ledgerPayments";
 import LedgerPaymentModal from "../components/ui/LedgerPaymentModal";
 import Modal from "../components/ui/Modal";
+import { downloadLedgerPdf } from "../utils/ledgerPdf";
 
 interface InvoiceListItem {
   _id: string;
@@ -50,6 +51,7 @@ function CustomerLedgerDetail() {
   const [openingBalanceOpen, setOpeningBalanceOpen] = useState(false);
   const [openingBalanceInput, setOpeningBalanceInput] = useState("");
   const [openingBalanceLoading, setOpeningBalanceLoading] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   const fetchDetail = useCallback(async () => {
     if (!token || !customerId) {
@@ -177,7 +179,6 @@ function CustomerLedgerDetail() {
     customerId: string;
     amount: number;
     method: "CASH" | "BANK" | "OTHER";
-    paymentDate: string;
     notes?: string;
   }) => {
     if (!token || !customerId) return;
@@ -186,7 +187,6 @@ function CustomerLedgerDetail() {
       await createCustomerLedgerPaymentAPI(token, customerId, {
         amount: payload.amount,
         method: payload.method,
-        paymentDate: payload.paymentDate,
         notes: payload.notes,
       });
       setRecordOpen(false);
@@ -227,9 +227,32 @@ function CustomerLedgerDetail() {
         <button className="btn btn-ghost" onClick={() => navigate("/ledger")}>
           ← Back to Ledger
         </button>
-        <button className="btn btn-primary" onClick={() => setRecordOpen(true)}>
-          Record Payment
-        </button>
+        <div className="flex gap-[8px]">
+          <button
+            className="btn btn-ghost"
+            disabled={isPrinting || isLoading || ledgerRows.length === 0}
+            onClick={async () => {
+              if (!customer) return;
+              setIsPrinting(true);
+              try {
+                await downloadLedgerPdf({
+                  customerName: customer.name,
+                  shopName: customer.shop_name,
+                  phone: customer.phone,
+                  rows: ledgerRows,
+                  totals,
+                });
+              } finally {
+                setIsPrinting(false);
+              }
+            }}
+          >
+            {isPrinting ? "Preparing..." : "Print PDF"}
+          </button>
+          <button className="btn btn-primary" onClick={() => setRecordOpen(true)}>
+            Record Payment
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -277,14 +300,15 @@ function CustomerLedgerDetail() {
                   {customer.shop_name || "No shop name"}
                 </div>
               </div>
-              {!customer.opening_balance_set && (
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setOpeningBalanceOpen(true)}
-                >
-                  + Set Opening Balance
-                </button>
-              )}
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setOpeningBalanceInput(String(customer.opening_balance ?? ""));
+                  setOpeningBalanceOpen(true);
+                }}
+              >
+                {customer.opening_balance_set ? "Edit Opening Balance" : "+ Set Opening Balance"}
+              </button>
             </div>
           </div>
 

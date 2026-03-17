@@ -4,7 +4,7 @@ import StatCard from "../components/ui/StatCard";
 import Badge from "../components/ui/Badge";
 import Avatar from "../components/ui/Avatar";
 import { useAuth } from "../context/AuthContext";
-import { getSummaryAPI } from "../api/summary";
+import { getSummaryAPI, getLedgerSummaryAPI } from "../api/summary";
 import { getInvoicesAPI } from "../api/invoices";
 
 type SummaryResponse = {
@@ -95,8 +95,8 @@ function Dashboard() {
   const navigate = useNavigate();
 
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
+  const [ledgerSummary, setLedgerSummary] = useState<{ total_receivable: number; total_paid: number; customers_with_balance: number } | null>(null);
   const [outstanding, setOutstanding] = useState<OutstandingCustomer[]>([]);
-  const [openInvoicesCount, setOpenInvoicesCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -130,9 +130,11 @@ function Dashboard() {
     setIsLoading(true);
     setError("");
     try {
-      const dashboardSummary = (await getSummaryAPI(token, {
-        overdueDays: 7,
-      })) as SummaryResponse;
+      const [dashboardSummary, ledgerData] = await Promise.all([
+        getSummaryAPI(token, { overdueDays: 7 }) as Promise<SummaryResponse>,
+        getLedgerSummaryAPI(token),
+      ]);
+      setLedgerSummary(ledgerData);
 
       const [unpaid, partial] = await Promise.all([
         fetchInvoicesByStatus("unpaid"),
@@ -142,7 +144,6 @@ function Dashboard() {
       const openInvoices = [...unpaid, ...partial].filter(
         (inv) => (inv.remaining_amount ?? 0) > 0,
       );
-      setOpenInvoicesCount(openInvoices.length);
 
       const overdueCutoff = new Date();
       overdueCutoff.setHours(0, 0, 0, 0);
@@ -274,8 +275,8 @@ function Dashboard() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-[13px] mb-[22px]">
         <StatCard
           label="Total Receivable"
-          value={pkr(summary?.kpis.receivable ?? 0)}
-          change={`${openInvoicesCount} open invoices`}
+          value={pkr(ledgerSummary?.total_receivable ?? 0)}
+          change={`${ledgerSummary?.customers_with_balance ?? 0} customers with balance`}
           changeType="down"
           accentColor="#1a6eff"
           icon={
@@ -312,9 +313,9 @@ function Dashboard() {
           }
         />
         <StatCard
-          label="Partial Payments"
-          value={String(summary?.kpis.partial_count ?? 0)}
-          change="invoices pending"
+          label="Customers Owing"
+          value={String(ledgerSummary?.customers_with_balance ?? 0)}
+          change="have outstanding balance"
           changeType="neutral"
           accentColor="#ffb020"
           icon={
@@ -326,28 +327,29 @@ function Dashboard() {
               stroke="#ffb020"
               strokeWidth="2"
             >
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
             </svg>
           }
         />
         <StatCard
-          label="Overdue"
-          value={pkr(summary?.kpis.overdue_amount ?? 0)}
-          change={`${summary?.kpis.overdue_customers ?? 0} customers`}
-          changeType="down"
-          accentColor="#ff4d6a"
+          label="Total Collected"
+          value={pkr(ledgerSummary?.total_paid ?? 0)}
+          change="all-time ledger payments"
+          changeType="up"
+          accentColor="#00c97a"
           icon={
             <svg
               width="16"
               height="16"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="#ff4d6a"
+              stroke="#00c97a"
               strokeWidth="2"
             >
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-              <line x1="12" y1="9" x2="12" y2="13" />
+              <polyline points="20 6 9 17 4 12" />
             </svg>
           }
         />

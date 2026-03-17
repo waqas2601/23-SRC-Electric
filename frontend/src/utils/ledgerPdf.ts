@@ -1,23 +1,25 @@
-type InvoicePdfItem = {
-  productName: string;
-  sku?: string;
-  quantity: number;
-  boxQty?: number | null;
-  unitPrice: number;
-  lineTotal: number;
+type LedgerRow = {
+  date?: string;
+  description: string;
+  debit: number;
+  credit: number;
+  balance: number;
 };
 
-export type InvoicePdfData = {
-  invoiceNo: string;
-  invoiceDate: string;
+type LedgerTotals = {
+  opening: number;
+  totalInvoiced: number;
+  totalPaid: number;
+  totalOutstanding: number;
+  remaining: number;
+};
+
+export type LedgerPdfData = {
   customerName: string;
-  subtotal: number;
-  discount: number;
-  total: number;
-  paidAmount?: number;
-  remainingAmount?: number;
-  notes?: string;
-  items: InvoicePdfItem[];
+  shopName?: string;
+  phone?: string;
+  rows: LedgerRow[];
+  totals: LedgerTotals;
 };
 
 // ── Logo caching ─────────────────────────────────────────────────────────────
@@ -49,18 +51,6 @@ async function getLogos(): Promise<[string | null, string | null]> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function modelDisplayName(sku: string | undefined): string {
-  if (!sku) return "—";
-  const prefix = sku.split("-")[0].toUpperCase();
-  switch (prefix) {
-    case "AS": return "A Series";
-    case "KS": return "K Series";
-    case "RS": return "R Series";
-    case "US": return "Unique Series";
-    default:   return sku;
-  }
-}
-
 function formatMoney(value: number): string {
   return `PKR ${value.toLocaleString()}`;
 }
@@ -76,61 +66,44 @@ function formatDate(dateStr: string): string {
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
 function buildHtml(
-  data: InvoicePdfData,
+  data: LedgerPdfData,
   logo1: string | null,
   logo2: string | null,
 ): string {
-  const date = data.invoiceDate ? formatDate(data.invoiceDate) : "";
-  const discount = data.discount ?? 0;
-  const paidAmount = data.paidAmount ?? 0;
-  const itemCount = data.items.length;
-
   const logoImg = (src: string | null, alt: string) =>
     src
       ? `<img src="${src}" alt="${alt}" class="logo-img" />`
       : `<div class="logo-placeholder">${alt}</div>`;
 
-  const itemRows = data.items
-    .map(
-      (item, i) => `
-      <tr class="${i % 2 === 1 ? "row-alt" : ""}">
-        <td class="center">${i + 1}</td>
-        <td>${item.productName}</td>
-        <td>${modelDisplayName(item.sku)}</td>
-        <td class="center">${item.boxQty != null ? item.boxQty : "—"}</td>
-        <td class="center">${item.quantity}</td>
-        <td class="right">${formatMoney(item.unitPrice)}</td>
-        <td class="right bold">${formatMoney(item.lineTotal)}</td>
-      </tr>`,
-    )
-    .join("");
+  let rowsHtml = "";
 
-  const discountRow =
-    discount > 0
-      ? `<tr class="sum-row">
-          <td class="center">${itemCount + 2}</td>
-          <td colspan="5" class="sum-label-left">Discount</td>
-          <td class="right red bold">&minus; ${formatMoney(discount)}</td>
-        </tr>`
-      : "";
+  if (data.rows.length === 0) {
+    rowsHtml = `<tr><td colspan="6" style="text-align:center;color:#999;padding:20px;">No ledger entries.</td></tr>`;
+  } else {
+    data.rows.forEach((row, idx) => {
+      const altRow = idx % 2 === 1 ? "row-alt" : "";
+      const dateLabel = row.date ? formatDate(row.date) : "—";
+      const debitHtml =
+        row.debit > 0
+          ? `<span class="red bold">${row.debit.toLocaleString()}</span>`
+          : "—";
+      const creditHtml =
+        row.credit > 0
+          ? `<span class="green bold">${row.credit.toLocaleString()}</span>`
+          : "—";
+      const balanceColor = row.balance > 0 ? "#c62828" : "#2e7d32";
 
-  const notesSection = data.notes?.trim()
-    ? `<div class="notes-box"><span class="notes-label">Notes</span> ${data.notes.trim()}</div>`
-    : "";
-
-  const paymentRows =
-    paidAmount > 0
-      ? `<div class="payment-rows">
-          <div class="pay-row">
-            <span class="pay-row-label">Paid</span>
-            <span class="bold green">${formatMoney(paidAmount)}</span>
-          </div>
-          <div class="pay-row">
-            <span class="pay-row-label">Remaining</span>
-            <span class="bold ${(data.remainingAmount ?? 0) > 0 ? "red" : "green"}">${formatMoney(data.remainingAmount ?? 0)}</span>
-          </div>
-        </div>`
-      : "";
+      rowsHtml += `
+        <tr class="${altRow}">
+          <td class="center">${idx + 1}</td>
+          <td>${dateLabel}</td>
+          <td>${row.description}</td>
+          <td class="right">${debitHtml}</td>
+          <td class="right">${creditHtml}</td>
+          <td class="right bold" style="color:${balanceColor}">${row.balance.toLocaleString()}</td>
+        </tr>`;
+    });
+  }
 
   return `<!DOCTYPE html>
 <html>
@@ -248,21 +221,18 @@ function buildHtml(
   .bold { font-weight: 700; }
 
   /* ─── Summary section ─── */
-  .sum-row td { border: none; padding: 8px 10px; }
-  .sum-row-divider td { border-bottom: 1px solid #c5cae9; }
-  .sum-label {
-    text-align: right;
-    font-size: 11px;
-    font-weight: 600;
-    color: #5c6bc0;
+  .sum-section { padding: 14px 24px 0; }
+  .sum-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #e8eaf6;
+    font-size: 12px;
   }
-  .sum-label-left {
-    text-align: left;
-    font-size: 11px;
-    font-weight: 600;
-    color: #5c6bc0;
-  }
+  .sum-row:last-child { border-bottom: none; }
+  .sum-label { color: #5c6bc0; font-weight: 600; }
 
+  /* ─── Total band ─── */
   .total-band {
     background: #1a237e;
     margin: 6px 24px 0;
@@ -275,40 +245,9 @@ function buildHtml(
   .total-label { font-size: 13px; font-weight: 700; color: #90caf9; letter-spacing: 0.5px; }
   .total-value { font-size: 20px; font-weight: 900; color: #fff; }
 
-  /* ─── Payment rows ─── */
-  .payment-rows { padding: 6px 24px 0; }
-  .pay-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 3px 0;
-    font-size: 12px;
-  }
-  .pay-row-label { color: #5c6bc0; font-weight: 600; }
-
   /* ─── Colors ─── */
   .red   { color: #c62828; }
   .green { color: #2e7d32; }
-
-  /* ─── Notes ─── */
-  .notes-box {
-    margin: 14px 24px 0;
-    padding: 10px 14px;
-    background: #fff8e1;
-    border-left: 3px solid #ffb300;
-    border-radius: 4px;
-    font-size: 11px;
-    color: #555;
-    line-height: 1.6;
-  }
-  .notes-label {
-    font-weight: 700;
-    color: #f57f17;
-    text-transform: uppercase;
-    font-size: 9px;
-    letter-spacing: 0.5px;
-    display: block;
-    margin-bottom: 3px;
-  }
 
   /* ─── Signature ─── */
   .sig-row {
@@ -347,60 +286,66 @@ function buildHtml(
   </div>
   <div class="accent-line"></div>
 
-  <!-- Invoice meta -->
+  <!-- Customer meta -->
   <div class="meta-strip">
     <div class="meta-item">
-      <span class="meta-label">Bill No.</span>
-      <span class="meta-value">${data.invoiceNo}</span>
+      <span class="meta-label">Customer</span>
+      <span class="meta-value">${data.customerName || "—"}</span>
     </div>
     <div class="meta-item" style="text-align:center">
-      <span class="meta-label">Customer</span>
-      <span class="meta-value">${data.customerName}</span>
+      <span class="meta-label">Shop</span>
+      <span class="meta-value">${data.shopName || "—"}</span>
     </div>
     <div class="meta-item" style="text-align:right">
-      <span class="meta-label">Date</span>
-      <span class="meta-value">${date}</span>
+      <span class="meta-label">Phone</span>
+      <span class="meta-value">${data.phone || "—"}</span>
     </div>
   </div>
 
-  <!-- Line items -->
+  <!-- Ledger table -->
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th class="center" style="width:34px">S.No</th>
-          <th>Item</th>
-          <th>Model</th>
-          <th class="center" style="width:54px">Box Qty</th>
-          <th class="center" style="width:44px">Qty</th>
-          <th class="right"  style="width:108px">Unit Price</th>
-          <th class="right"  style="width:108px">Amount</th>
+          <th class="center" style="width:34px">#</th>
+          <th style="width:110px">Date</th>
+          <th>Description</th>
+          <th class="right" style="width:110px">Debit</th>
+          <th class="right" style="width:110px">Credit</th>
+          <th class="right" style="width:110px">Balance</th>
         </tr>
       </thead>
       <tbody>
-        ${itemRows}
-      </tbody>
-      <tbody>
-        <tr><td colspan="7" style="padding:0; border:none; height:6px;"></td></tr>
-        <tr class="sum-row sum-row-divider">
-          <td class="center">${itemCount + 1}</td>
-          <td colspan="5" class="sum-label-left">List Total</td>
-          <td class="right bold">${formatMoney(data.subtotal)}</td>
-        </tr>
-        ${discountRow}
+        ${rowsHtml}
       </tbody>
     </table>
   </div>
 
-  <!-- Net Total band -->
-  <div class="total-band">
-    <span class="total-label">NET TOTAL</span>
-    <span class="total-value">${formatMoney(data.total)}</span>
+  <!-- Summary -->
+  <div class="sum-section">
+    <div class="sum-row">
+      <span class="sum-label">Opening Balance</span>
+      <span class="bold">${formatMoney(data.totals.opening)}</span>
+    </div>
+    <div class="sum-row">
+      <span class="sum-label">Total Invoiced</span>
+      <span class="bold">${formatMoney(data.totals.totalInvoiced)}</span>
+    </div>
+    <div class="sum-row">
+      <span class="sum-label">Total Outstanding</span>
+      <span class="bold">${formatMoney(data.totals.totalOutstanding)}</span>
+    </div>
+    <div class="sum-row">
+      <span class="sum-label">Total Paid</span>
+      <span class="bold green">${formatMoney(data.totals.totalPaid)}</span>
+    </div>
   </div>
 
-  ${paymentRows}
-
-  ${notesSection}
+  <!-- Remaining band -->
+  <div class="total-band">
+    <span class="total-label">REMAINING BALANCE</span>
+    <span class="total-value">${formatMoney(data.totals.remaining)}</span>
+  </div>
 
   <!-- Signatures -->
   <div class="sig-row">
@@ -414,7 +359,7 @@ function buildHtml(
 
 // ── Public export ─────────────────────────────────────────────────────────────
 
-export async function downloadInvoicePdf(data: InvoicePdfData): Promise<void> {
+export async function downloadLedgerPdf(data: LedgerPdfData): Promise<void> {
   const [logo1, logo2] = await getLogos();
   const html = buildHtml(data, logo1, logo2);
 
@@ -426,7 +371,6 @@ export async function downloadInvoicePdf(data: InvoicePdfData): Promise<void> {
   win.onload = () => {
     win.print();
   };
-  // Fallback — onload may have already fired by the time we assign it
   setTimeout(() => {
     try { win.print(); } catch { /* already printed */ }
   }, 800);
