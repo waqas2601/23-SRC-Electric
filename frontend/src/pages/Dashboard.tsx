@@ -4,8 +4,7 @@ import StatCard from "../components/ui/StatCard";
 import Badge from "../components/ui/Badge";
 import Avatar from "../components/ui/Avatar";
 import { useAuth } from "../context/AuthContext";
-import { getSummaryAPI, getLedgerSummaryAPI } from "../api/summary";
-import { getInvoicesAPI } from "../api/invoices";
+import { getSummaryAPI, getLedgerSummaryAPI, getOutstandingCustomersAPI } from "../api/summary";
 
 type SummaryResponse = {
   period: { from: string; to: string };
@@ -101,24 +100,6 @@ function Dashboard() {
   const [error, setError] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  const fetchInvoicesByStatus = useCallback(
-    async (status: "unpaid" | "partial") => {
-      if (!token) return [] as InvoiceRow[];
-      const all: InvoiceRow[] = [];
-      let page = 1;
-      let totalPages = 1;
-
-      while (page <= totalPages) {
-        const data = await getInvoicesAPI(token, { status, page, limit: 100 });
-        all.push(...((data.items ?? []) as InvoiceRow[]));
-        totalPages = data.pagination?.totalPages ?? 1;
-        page += 1;
-      }
-      return all;
-    },
-    [token],
-  );
-
   const fetchDashboard = useCallback(async () => {
     if (!token) {
       setIsLoading(false);
@@ -130,66 +111,30 @@ function Dashboard() {
     setIsLoading(true);
     setError("");
     try {
-      const [dashboardSummary, ledgerData] = await Promise.all([
+      const [dashboardSummary, ledgerData, outstandingData] = await Promise.all([
         getSummaryAPI(token, { overdueDays: 7 }) as Promise<SummaryResponse>,
         getLedgerSummaryAPI(token),
+        getOutstandingCustomersAPI(token),
       ]);
-      setLedgerSummary(ledgerData);
-
-      const [unpaid, partial] = await Promise.all([
-        fetchInvoicesByStatus("unpaid"),
-        fetchInvoicesByStatus("partial"),
-      ]);
-
-      const openInvoices = [...unpaid, ...partial].filter(
-        (inv) => (inv.remaining_amount ?? 0) > 0,
-      );
-
-      const overdueCutoff = new Date();
-      overdueCutoff.setHours(0, 0, 0, 0);
-      overdueCutoff.setDate(
-        overdueCutoff.getDate() - (dashboardSummary.overdue_days ?? 7),
-      );
-
-      const map = new Map<string, OutstandingCustomer>();
-      openInvoices.forEach((inv) => {
-        const customer = inv.customer_id;
-        if (!customer?._id) return;
-
-        const existing = map.get(customer._id);
-        const amount = inv.remaining_amount ?? 0;
-        const isOverdue =
-          new Date(inv.invoice_date).getTime() < overdueCutoff.getTime();
-
-        if (!existing) {
-          map.set(customer._id, {
-            customerId: customer._id,
-            name: customer.name || "Unknown",
-            shop: customer.shop_name || "No shop name",
-            amount,
-            hasOverdue: isOverdue,
-            initials: getInitials(customer.name || "U"),
-            gradient: getGradient(customer.name || "Unknown"),
-          });
-          return;
-        }
-
-        existing.amount += amount;
-        existing.hasOverdue = existing.hasOverdue || isOverdue;
-      });
-
-      const topOutstanding = Array.from(map.values())
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 6);
-
       setSummary(dashboardSummary);
-      setOutstanding(topOutstanding);
+      setLedgerSummary(ledgerData);
+      setOutstanding(
+        outstandingData.customers.slice(0, 6).map((c, i) => ({
+          customerId: c._id,
+          name: c.name || "Unknown",
+          shop: c.shop_name || "No shop name",
+          amount: c.remaining,
+          hasOverdue: false,
+          initials: getInitials(c.name || "U"),
+          gradient: getGradient(c.name || "Unknown"),
+        })),
+      );
     } catch (err: any) {
       setError(err.message || "Failed to load dashboard");
     } finally {
       setIsLoading(false);
     }
-  }, [token, fetchInvoicesByStatus]);
+  }, [token]);
 
   useEffect(() => {
     fetchDashboard();

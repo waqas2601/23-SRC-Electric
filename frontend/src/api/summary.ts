@@ -22,6 +22,16 @@ export async function getSummaryAPI(
   return res.json();
 }
 
+export async function getOutstandingCustomersAPI(token: string): Promise<{
+  customers: { _id: string; name: string; shop_name?: string; remaining: number }[];
+}> {
+  const res = await fetch(`${API_URL}/summary/outstanding-customers`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to fetch outstanding customers");
+  return res.json();
+}
+
 export async function getLedgerSummaryAPI(token: string): Promise<{
   total_receivable: number;
   total_paid: number;
