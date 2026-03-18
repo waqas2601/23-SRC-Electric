@@ -252,9 +252,9 @@ function InvoiceDetail() {
         .map((p) => p.model);
       setSelectedModel(null);
       // Optionally: auto-select if only one model
-      if (models.length === 1) setSelectedModel(models[0] ?? null);
+      if (models.length === 1) setSelectedModel(models[0]?.label ?? null);
     } else {
-      setSelectedModel(product.model ?? null);
+      setSelectedModel(product.model?.label ?? null);
     }
   };
 
