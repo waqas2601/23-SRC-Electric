@@ -5,7 +5,7 @@ import CustomerModal from "../components/ui/CustomerModal";
 import { useAuth } from "../context/AuthContext";
 import {
   getCustomersAPI,
-  deleteCustomerAPI,
+  updateCustomerAPI,
   type Customer,
 } from "../api/customers";
 import { useToast } from "../context/ToastContext";
@@ -78,12 +78,12 @@ function Customers() {
     if (!deleteId || !token) return;
     setDeleteLoading(true);
     try {
-      await deleteCustomerAPI(token, deleteId);
+      await updateCustomerAPI(token, deleteId, { is_active: false });
       setDeleteId(null);
       await fetchCustomers();
-      showToast("success", "Customer deleted successfully");
+      showToast("success", "Customer deactivated successfully");
     } catch (err: any) {
-      showToast("error", err.message || "Failed to delete customer");
+      showToast("error", err.message || "Failed to deactivate customer");
     } finally {
       setDeleteLoading(false);
     }
@@ -336,14 +336,13 @@ function Customers() {
                 className="font-inter font-bold text-[16px] mb-2"
                 style={{ color: "var(--text-primary)" }}
               >
-                Delete Customer?
+                Deactivate Customer?
               </div>
               <div
                 className="text-[13px]"
                 style={{ color: "var(--text-secondary)" }}
               >
-                This will permanently delete the customer and all related
-                invoices and payments.
+                {customers.find((c) => c._id === deleteId)?.name ?? "This customer"} will be deactivated and hidden from active lists.
               </div>
             </div>
             <div className="flex gap-[9px] p-[0_24px_24px]">
@@ -366,10 +365,10 @@ function Customers() {
                 {deleteLoading ? (
                   <>
                     <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    Deleting...
+                    Deactivating...
                   </>
                 ) : (
-                  "Yes, Delete"
+                  "Yes, Deactivate"
                 )}
               </button>
             </div>

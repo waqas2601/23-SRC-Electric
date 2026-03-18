@@ -173,7 +173,7 @@ function Ledger() {
       </div>
 
       {ledgerSummary && (
-        <div className="grid grid-cols-3 gap-[13px] mb-[16px]">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-[13px] mb-[16px]">
           <StatCard
             label="Total Receivable"
             value={`PKR ${(ledgerSummary.total_receivable ?? 0).toLocaleString()}`}

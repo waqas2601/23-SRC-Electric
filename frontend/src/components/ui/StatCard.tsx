@@ -5,6 +5,7 @@ interface StatCardProps {
   changeType: "up" | "down" | "neutral";
   accentColor: string;
   icon: React.ReactNode;
+  loading?: boolean;
 }
 
 function StatCard({
@@ -14,6 +15,7 @@ function StatCard({
   changeType,
   accentColor,
   icon,
+  loading,
 }: StatCardProps) {
   const changeColors = {
     up: "#00c97a",
@@ -51,18 +53,27 @@ function StatCard({
         </div>
       </div>
 
-      {/* Value */}
-      <div
-        className="font-inter font-extrabold leading-none mb-[6px] text-[18px] sm:text-[22px]"
-        style={{ color: "var(--text-primary)" }}
-      >
-        {value}
-      </div>
+      {loading ? (
+        <>
+          <div className="h-[26px] w-[60%] rounded-md mb-[8px] animate-pulse" style={{ background: "var(--border)" }} />
+          <div className="h-[12px] w-[80%] rounded-md animate-pulse" style={{ background: "var(--border)" }} />
+        </>
+      ) : (
+        <>
+          {/* Value */}
+          <div
+            className="font-inter font-extrabold leading-none mb-[6px] text-[18px] sm:text-[22px]"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {value}
+          </div>
 
-      {/* Change */}
-      <div className="text-[11px]" style={{ color: changeColors[changeType] }}>
-        {change}
-      </div>
+          {/* Change */}
+          <div className="text-[11px]" style={{ color: changeColors[changeType] }}>
+            {change}
+          </div>
+        </>
+      )}
     </div>
   );
 }

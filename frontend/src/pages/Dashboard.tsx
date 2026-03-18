@@ -224,6 +224,7 @@ function Dashboard() {
           change={`${ledgerSummary?.customers_with_balance ?? 0} customers with balance`}
           changeType="down"
           accentColor="#1a6eff"
+          loading={isLoading}
           icon={
             <svg
               width="16"
@@ -244,6 +245,7 @@ function Dashboard() {
           change="received from ledger"
           changeType="up"
           accentColor="#00c97a"
+          loading={isLoading}
           icon={
             <svg
               width="16"
@@ -263,6 +265,7 @@ function Dashboard() {
           change="have outstanding balance"
           changeType="neutral"
           accentColor="#ffb020"
+          loading={isLoading}
           icon={
             <svg
               width="16"
@@ -285,6 +288,7 @@ function Dashboard() {
           change="all-time ledger payments"
           changeType="up"
           accentColor="#00c97a"
+          loading={isLoading}
           icon={
             <svg
               width="16"

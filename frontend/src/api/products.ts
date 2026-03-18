@@ -56,6 +56,35 @@ async function getErrorMessage(
   }
 }
 
+export async function createProductModelAPI(token: string, label: string) {
+  const res = await fetch(`${API_URL}/product-models`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) throw new Error(await getErrorMessage(res, "Failed to create model"));
+  return res.json();
+}
+
+export async function updateProductModelAPI(token: string, id: string, label: string) {
+  const res = await fetch(`${API_URL}/product-models/${id}`, {
+    method: "PATCH",
+    headers: headers(token),
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) throw new Error(await getErrorMessage(res, "Failed to update model"));
+  return res.json();
+}
+
+export async function deleteProductModelAPI(token: string, id: string) {
+  const res = await fetch(`${API_URL}/product-models/${id}`, {
+    method: "DELETE",
+    headers: headers(token),
+  });
+  if (!res.ok) throw new Error(await getErrorMessage(res, "Failed to delete model"));
+  return res.json();
+}
+
 export async function getProductModelsAPI(token: string) {
   const res = await fetch(`${API_URL}/product-models`, {
     headers: headers(token),

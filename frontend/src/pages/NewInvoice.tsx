@@ -62,6 +62,7 @@ function NewInvoice() {
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<LineItem[]>([]);
   const [itemQuery, setItemQuery] = useState("");
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [itemResults, setItemResults] = useState<Product[]>([]);
   const [itemLoading, setItemLoading] = useState(false);
   const [showItemResults, setShowItemResults] = useState(false);
@@ -116,32 +117,39 @@ function NewInvoice() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // Load all products once on mount
   useEffect(() => {
-    if (!token) {
-      setItemResults([]);
-      return;
-    }
-
-    const q = itemQuery.trim();
-    const timeout = setTimeout(async () => {
+    if (!token) return;
+    const load = async () => {
       setItemLoading(true);
       try {
-        const data = await getProductsAPI(token, {
-          q: q || undefined,
-          isActive: true,
-          limit: q ? 8 : 50,
-        });
-        const items = (data.items ?? []) as Product[];
-        setItemResults(q ? items : mixProductsByModel(items).slice(0, 20));
+        const all: Product[] = [];
+        let page = 1, totalPages = 1;
+        while (page <= totalPages) {
+          const data = await getProductsAPI(token, { isActive: true, page, limit: 100 });
+          all.push(...(data.items ?? []));
+          totalPages = data.pagination?.totalPages ?? 1;
+          page += 1;
+        }
+        setAllProducts(all);
       } catch {
-        setItemResults([]);
+        setAllProducts([]);
       } finally {
         setItemLoading(false);
       }
-    }, 250);
+    };
+    void load();
+  }, [token]);
 
-    return () => clearTimeout(timeout);
-  }, [itemQuery, token]);
+  // Filter client-side on query change
+  useEffect(() => {
+    if (!showItemResults) { setItemResults([]); return; }
+    const q = itemQuery.trim().toLowerCase();
+    const filtered = q
+      ? allProducts.filter((p) => p.name.toLowerCase().includes(q))
+      : mixProductsByModel(allProducts).slice(0, 20);
+    setItemResults(filtered);
+  }, [itemQuery, allProducts, showItemResults]);
 
   const upsertProductItem = (
     product: Product,
@@ -188,6 +196,8 @@ function NewInvoice() {
     // Reset model selection
     if (product.type === "model") {
       setSelectedModel(null);
+      setSelectedProduct({ ...product, price: 0 });
+      return;
     } else {
       setSelectedModel(product.model?.label ?? null);
     }
@@ -435,11 +445,10 @@ function NewInvoice() {
                   {/* Model selection dropdown if product is model type */}
                   {selectedProduct &&
                     selectedProduct.type === "model" &&
-                    itemResults.length > 0 &&
                     (() => {
-                      // Build modelPrices map for selected product
+                      // Build modelPrices map from allProducts (not itemResults) so it stays visible after search closes
                       const modelPrices: { [model: string]: number } = {};
-                      itemResults.forEach((item) => {
+                      allProducts.forEach((item) => {
                         const label = item.model?.label;
                         if (item.name === selectedProduct.name && label && typeof item.price === "number") {
                           modelPrices[label] = item.price;
@@ -458,7 +467,14 @@ function NewInvoice() {
                           <select
                             className="fi"
                             value={selectedModel ?? ""}
-                            onChange={(e) => setSelectedModel(e.target.value)}
+                            onChange={(e) => {
+                              const label = e.target.value;
+                              setSelectedModel(label);
+                              const matched = allProducts.find(
+                                (p) => p.name === selectedProduct.name && p.model?.label === label
+                              );
+                              if (matched) setSelectedProduct(matched);
+                            }}
                           >
                             <option value="">Select model...</option>
                             {models.map((m) => (

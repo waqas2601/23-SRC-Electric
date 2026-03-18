@@ -22,19 +22,6 @@ interface Invoice {
   status: "unpaid" | "partial" | "completed";
 }
 
-const FILTERS = [
-  { label: "All", value: "" },
-  { label: "Unpaid", value: "unpaid" },
-  { label: "Partial", value: "partial" },
-  { label: "Paid", value: "completed" },
-];
-
-const statusMap: Record<string, "unpaid" | "partial" | "paid"> = {
-  unpaid: "unpaid",
-  partial: "partial",
-  completed: "paid",
-};
-
 const remainingColor: Record<string, string> = {
   unpaid: "#ff4d6a",
   partial: "#ffb020",
@@ -119,12 +106,9 @@ function Invoices() {
     (acc, inv) => {
       acc.total += 1;
       acc.amount += inv.total_amount;
-      if (inv.status === "completed") acc.paid += 1;
-      else if (inv.status === "partial") acc.partial += 1;
-      else acc.unpaid += 1;
       return acc;
     },
-    { total: 0, paid: 0, partial: 0, unpaid: 0, amount: 0 },
+    { total: 0, amount: 0 },
   );
 
   return (

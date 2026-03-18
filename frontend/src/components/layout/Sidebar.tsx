@@ -174,6 +174,44 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
         </NavLink>
 
         <NavLink
+          to="/models"
+          onClick={onClose}
+          className={({ isActive }) =>
+            `flex items-center gap-[10px] px-[11px] py-[9px] rounded-lg cursor-pointer text-[13px] mb-[2px] transition-all duration-[180ms] border relative no-underline ${isActive ? "nav-active" : "nav-inactive"}`
+          }
+          style={({ isActive }) => ({
+            background: isActive ? "var(--electric-glow)" : "transparent",
+            color: isActive
+              ? "var(--electric-bright)"
+              : "var(--text-secondary)",
+            borderColor: isActive ? "rgba(26,110,255,.3)" : "transparent",
+          })}
+        >
+          {({ isActive }) => (
+            <>
+              {isActive && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[18px] rounded-r-sm"
+                  style={{ background: "#e8141c" }}
+                />
+              )}
+              <svg
+                className="w-4 h-4 opacity-80 flex-shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+              Models
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
           to="/customers"
           onClick={onClose}
           className={({ isActive }) =>

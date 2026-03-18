@@ -12,6 +12,7 @@ import Payments from "./pages/Payments";
 import Ledger from "./pages/Ledger";
 import CustomerLedgerDetail from "./pages/CustomerLedgerDetail";
 import InvoiceDetail from "./pages/InvoiceDetail";
+import Models from "./pages/Models";
 import { ToastProvider } from "./context/ToastContext";
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="products" element={<Products />} />
+              <Route path="models" element={<Models />} />
               <Route path="customers" element={<Customers />} />
               <Route path="invoices" element={<Invoices />} />
               <Route path="new-invoice" element={<NewInvoice />} />
