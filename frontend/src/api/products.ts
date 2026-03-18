@@ -5,11 +5,17 @@ const headers = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
 
+export interface ProductModelRef {
+  _id: string;
+  label: string;
+  sku_prefix: string;
+}
+
 export interface Product {
   _id: string;
   name: string;
   type: "direct" | "model";
-  model?: string | null;
+  model?: ProductModelRef | null;
   price: number;
   sku: string;
 }
@@ -102,7 +108,7 @@ export async function addProductAPI(
   data: {
     type: "direct" | "model";
     name: string;
-    model?: string;
+    modelId?: string;
     price: number;
     sku?: string;
   },
@@ -110,7 +116,7 @@ export async function addProductAPI(
   const payload = {
     type: data.type,
     name: data.name,
-    ...(data.type === "model" && data.model ? { model: data.model } : {}),
+    ...(data.type === "model" && data.modelId ? { model: data.modelId } : {}),
     price: data.price,
     ...(data.sku ? { sku: data.sku } : {}),
   };
@@ -131,15 +137,16 @@ export async function updateProductAPI(
   id: string,
   data: {
     name?: string;
-    model?: string;
+    modelId?: string;
     price?: number;
     sku?: string;
   },
 ) {
+  const { modelId, ...rest } = data;
   const res = await fetch(`${API_URL}/products/${id}`, {
     method: "PATCH",
     headers: headers(token),
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...rest, ...(modelId ? { model: modelId } : {}) }),
   });
   if (!res.ok) {
     throw new Error(await getErrorMessage(res, "Failed to update product"));

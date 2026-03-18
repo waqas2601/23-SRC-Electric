@@ -89,12 +89,7 @@ function Products() {
     }
   };
 
-  const formatModel = (value?: string | null) => {
-    if (!value?.trim()) return "—";
-    return value.replace(/_/g, " ");
-  };
-
-  const toModelKey = (value?: string | null) => value?.trim() ?? "";
+  const modelLabel = (p: Product) => p.model?.label ?? "";
 
   const modelProducts = useMemo(
     () =>
@@ -102,9 +97,7 @@ function Products() {
         (p) =>
           p.type === "model" &&
           (activeTypeFilter ? p.type === activeTypeFilter : true) &&
-          (activeModelFilter
-            ? toModelKey(p.model) === activeModelFilter
-            : true),
+          (activeModelFilter ? modelLabel(p) === activeModelFilter : true),
       ),
     [products, activeTypeFilter, activeModelFilter],
   );
@@ -121,13 +114,9 @@ function Products() {
 
   const modelLabels = useMemo(() => {
     const fromProducts = Array.from(
-      new Set(
-        modelProducts
-          .map((p) => toModelKey(p.model))
-          .filter(Boolean) as string[],
-      ),
+      new Set(modelProducts.map((p) => modelLabel(p)).filter(Boolean)),
     );
-    const ordered = Array.from(new Set(models.map((m) => toModelKey(m))));
+    const ordered = Array.from(new Set(models));
     for (const label of fromProducts) {
       if (!ordered.includes(label)) ordered.push(label);
     }
@@ -255,7 +244,7 @@ function Products() {
                 <th style={{ width: "40px" }}>#</th>
                 <th>Name</th>
                 {modelLabels.map((m) => (
-                  <th key={m}>{formatModel(m)}</th>
+                  <th key={m}>{m}</th>
                 ))}
                 <th style={{ width: "120px" }}>Actions</th>
               </tr>
@@ -326,7 +315,7 @@ function Products() {
 
                     {modelLabels.map((m) => {
                       const variant = variants.find(
-                        (v) => toModelKey(v.model) === m,
+                        (v) => modelLabel(v) === m,
                       );
                       return (
                         <td key={m}>

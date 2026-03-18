@@ -8,6 +8,7 @@ import {
   getProductModelsAPI,
   type Product,
 } from "../../api/products";
+import type { ProductModelRef } from "../../api/products";
 import { useToast } from "../../context/ToastContext";
 
 interface ModelEntry {
@@ -39,11 +40,9 @@ function ProductModal({
   const [entries, setEntries] = useState<ModelEntry[]>([
     { model: "", price: "" },
   ]);
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<ProductModelRef[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-
-  const toModelKey = (value?: string | null) => value?.trim() ?? "";
 
   // Fetch model enum list
   useEffect(() => {
@@ -51,7 +50,7 @@ function ProductModal({
     if (!token) return;
     getProductModelsAPI(token)
       .then((data) => {
-        setModels(data.models ?? []);
+        setModels(data.items ?? []);
       })
       .catch(() => {
         setModels([]);
@@ -67,7 +66,7 @@ function ProductModal({
       setEntries(
         allVariants.map((v) => ({
           id: v._id,
-          model: toModelKey(v.model),
+          model: v.model?._id ?? "",
           price: String(v.price),
         })),
       );
@@ -79,7 +78,7 @@ function ProductModal({
       setEntries([
         {
           id: product._id,
-          model: toModelKey(product.model),
+          model: product.model?._id ?? "",
           price: String(product.price),
         },
       ]);
@@ -182,7 +181,6 @@ function ProductModal({
           for (const entry of existingEntries) {
             await updateProductAPI(token, entry.id!, {
               name: name.trim(),
-              model: entry.model,
               price: Math.round(Number(entry.price)),
             });
           }
@@ -192,7 +190,7 @@ function ProductModal({
             await addProductAPI(token, {
               type: "model",
               name: name.trim(),
-              model: entry.model,
+              modelId: entry.model,
               price: Math.round(Number(entry.price)),
             });
           }
@@ -202,7 +200,7 @@ function ProductModal({
               addProductAPI(token, {
                 type: "model",
                 name: name.trim(),
-                model: entry.model,
+                modelId: entry.model,
                 price: Math.round(Number(entry.price)),
               }),
             ),
@@ -226,8 +224,6 @@ function ProductModal({
       setIsLoading(false);
     }
   };
-
-  const formatModel = (m: string) => m.replace(/_/g, " ");
 
   return (
     <Modal
@@ -365,18 +361,13 @@ function ProductModal({
                       onChange={(e) => updateEntry(i, "model", e.target.value)}
                     >
                       <option value="">Select model...</option>
-                      {entry.model && !models.includes(entry.model) && (
-                        <option value={entry.model}>
-                          {formatModel(entry.model)}
-                        </option>
-                      )}
                       {models.map((m) => (
                         <option
-                          key={m}
-                          value={m}
-                          disabled={usedModels(i).includes(m)}
+                          key={m._id}
+                          value={m._id}
+                          disabled={usedModels(i).includes(m._id)}
                         >
-                          {formatModel(m)}
+                          {m.label}
                         </option>
                       ))}
                     </select>
