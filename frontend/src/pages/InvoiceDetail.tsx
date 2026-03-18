@@ -64,7 +64,7 @@ function mixProductsByModel(items: Product[]) {
 
   order.forEach((key) => buckets.set(key, []));
   items.forEach((item) => {
-    const key = String(item.model || "").toUpperCase();
+    const key = (item.model?.label || "").toUpperCase();
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(item);
   });
@@ -762,12 +762,9 @@ function InvoiceDetail() {
                   (() => {
                     const modelPrices: { [model: string]: number } = {};
                     itemResults.forEach((item) => {
-                      if (
-                        item.name === selectedProduct.name &&
-                        item.model &&
-                        typeof item.price === "number"
-                      ) {
-                        modelPrices[item.model] = item.price;
+                      const label = item.model?.label;
+                      if (item.name === selectedProduct.name && label && typeof item.price === "number") {
+                        modelPrices[label] = item.price;
                       }
                     });
                     const models = Object.keys(modelPrices);
@@ -789,7 +786,7 @@ function InvoiceDetail() {
                             const matched = itemResults.find(
                               (p) =>
                                 p.name === selectedProduct.name &&
-                                p.model === m,
+                                p.model?.label === m,
                             );
                             if (matched) setSelectedProduct(matched);
                           }}

@@ -26,7 +26,7 @@ function mixProductsByModel(items: Product[]) {
 
   order.forEach((key) => buckets.set(key, []));
   items.forEach((item) => {
-    const key = String(item.model || "").toUpperCase();
+    const key = (item.model?.label || "").toUpperCase();
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(item);
   });
@@ -50,7 +50,6 @@ function mixProductsByModel(items: Product[]) {
 function NewInvoice() {
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const { token } = useAuth();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -148,6 +147,7 @@ function NewInvoice() {
     product: Product,
     qty: number,
     boxQty: number | null,
+    modelLabel: string | null,
   ) => {
     setItems((prev) => {
       const existingIndex = prev.findIndex((i) => i.productId === product._id);
@@ -170,7 +170,7 @@ function NewInvoice() {
         {
           productId: product._id,
           productName: product.name,
-          productModel: product.model ?? null,
+          productModel: modelLabel,
           quantity: qty,
           unitPriceSnapshot: product.price,
           boxQty,
@@ -188,19 +188,8 @@ function NewInvoice() {
     // Reset model selection
     if (product.type === "model") {
       setSelectedModel(null);
-      // Fetch available models
-      if (token) {
-        import("../api/products").then(({ getProductModelsAPI }) => {
-          getProductModelsAPI(token)
-            .then((res) => {
-              setAvailableModels(res.models);
-            })
-            .catch(() => setAvailableModels([]));
-        });
-      }
     } else {
-      setSelectedModel(product.model ?? null);
-      setAvailableModels([]);
+      setSelectedModel(product.model?.label ?? null);
     }
   };
 
@@ -222,15 +211,11 @@ function NewInvoice() {
     }
 
     const boxQty = parsed === "" ? null : Math.max(0, Number(parsed));
-    // Use selectedModel if present
-    const productToAdd = {
-      ...selectedProduct,
-      model:
-        selectedProduct.type === "model"
-          ? selectedModel
-          : (selectedProduct.model ?? null),
-    };
-    upsertProductItem(productToAdd, draftQty, boxQty);
+    const modelLabel =
+      selectedProduct.type === "model"
+        ? selectedModel
+        : (selectedProduct.model?.label ?? null);
+    upsertProductItem(selectedProduct, draftQty, boxQty, modelLabel);
 
     setError("");
     setSelectedProduct(null);
@@ -239,7 +224,6 @@ function NewInvoice() {
     setDraftBoxQty("");
     setShowItemResults(false);
     setSelectedModel(null);
-    setAvailableModels([]);
   };
 
   const handleSubmit = async () => {
@@ -456,12 +440,9 @@ function NewInvoice() {
                       // Build modelPrices map for selected product
                       const modelPrices: { [model: string]: number } = {};
                       itemResults.forEach((item) => {
-                        if (
-                          item.name === selectedProduct.name &&
-                          item.model &&
-                          typeof item.price === "number"
-                        ) {
-                          modelPrices[item.model] = item.price;
+                        const label = item.model?.label;
+                        if (item.name === selectedProduct.name && label && typeof item.price === "number") {
+                          modelPrices[label] = item.price;
                         }
                       });
                       const models = Object.keys(modelPrices);
