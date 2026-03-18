@@ -56,7 +56,8 @@ function Invoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeFilter, setActiveFilter] = useState("");
+  // Remove filter state
+  const [searchQuery, setSearchQuery] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -70,15 +71,11 @@ function Invoices() {
     setIsLoading(true);
     setError("");
     try {
-      const all: Invoice[] = [];
-      let page = 1, totalPages = 1;
-      while (page <= totalPages) {
-        const data = await getInvoicesAPI(token, { status: activeFilter || undefined, page, limit: 100 });
-        all.push(...(data.items ?? []));
-        totalPages = data.pagination?.totalPages ?? 1;
-        page += 1;
-      }
-      setInvoices(all);
+      const data = await getInvoicesAPI(token, {
+        q: searchQuery || undefined,
+        limit: 50,
+      });
+      setInvoices(data.items ?? []);
     } catch (err: any) {
       const message = err.message || "Failed to load invoices";
       setError(message);
@@ -86,7 +83,18 @@ function Invoices() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, activeFilter, showToast]);
+  }, [token, searchQuery, showToast]);
+
+  const filteredInvoices = invoices.filter((inv) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      inv.invoice_no.toLowerCase().includes(q) ||
+      inv.customer_id?.name?.toLowerCase().includes(q) ||
+      inv.customer_id?.shop_name?.toLowerCase().includes(q) ||
+      inv.customer_id?.phone?.toLowerCase().includes(q)
+    );
+  });
 
   useEffect(() => {
     fetchInvoices();
@@ -148,16 +156,20 @@ function Invoices() {
         </button>
       </div>
 
-      {/* Chips */}
-      <div className="flex gap-[7px] flex-wrap mb-[17px]">
-        {FILTERS.map((f) => (
-          <Chip
-            key={f.value}
-            label={f.label}
-            active={activeFilter === f.value}
-            onClick={() => setActiveFilter(f.value)}
-          />
-        ))}
+      {/* Search Field */}
+      <div className="mb-[17px]">
+        <input
+          className="fi w-full max-w-[320px]"
+          type="text"
+          placeholder="Search invoices by customer, invoice #, etc."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{
+            border: "1px solid var(--border)",
+            padding: "8px 12px",
+            fontSize: "14px",
+          }}
+        />
       </div>
 
       {/* Error */}
@@ -225,7 +237,7 @@ function Invoices() {
             No invoices found
           </div>
         ) : (
-          invoices.map((inv) => (
+          filteredInvoices.map((inv) => (
             <div key={inv._id} className="card p-[14px]">
               <div className="flex items-start justify-between gap-3 mb-[10px]">
                 <div>
@@ -320,7 +332,7 @@ function Invoices() {
                 <th>Customer</th>
                 <th>Date</th>
                 <th>Total</th>
-                <th></th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -341,7 +353,7 @@ function Invoices() {
                     </div>
                   </td>
                 </tr>
-              ) : invoices.length === 0 ? (
+              ) : filteredInvoices.length === 0 ? (
                 <tr>
                   <td
                     colSpan={8}
@@ -352,7 +364,7 @@ function Invoices() {
                   </td>
                 </tr>
               ) : (
-                invoices.map((inv) => (
+                filteredInvoices.map((inv) => (
                   <tr key={inv._id}>
                     <td style={{ color: "var(--electric-bright)" }}>
                       #{inv.invoice_no}

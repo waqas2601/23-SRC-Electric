@@ -16,6 +16,7 @@ interface LedgerPaymentModalProps {
     customerId: string;
     amount: number;
     method: "CASH" | "BANK" | "OTHER";
+    paymentDate: string;
     notes?: string;
   }) => Promise<void>;
 }
@@ -110,11 +111,11 @@ function LedgerPaymentModal({
       return;
     }
 
-    setError("");
     await onSubmit({
       customerId: selectedCustomer._id,
       amount: amountNum,
       method,
+      paymentDate: new Date().toISOString().split("T")[0],
       notes: notes.trim() || undefined,
     });
   };

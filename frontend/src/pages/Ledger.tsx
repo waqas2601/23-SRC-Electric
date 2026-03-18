@@ -143,20 +143,33 @@ function Ledger() {
 
   return (
     <div style={{ animation: "fadeIn .2s ease" }}>
-      <div className="flex items-center justify-between mb-[16px] flex-wrap gap-[10px]">
+      <div className="mb-[16px]">
         <div
-          className="font-inter font-extrabold text-[20px]"
+          className="font-inter font-extrabold text-[20px] mb-[13px]"
           style={{ color: "var(--text-primary)" }}
         >
           Customer <span style={{ color: "var(--electric)" }}>Ledger</span>
         </div>
-        <input
-          className="fi"
-          style={{ maxWidth: 280 }}
-          placeholder="Search customer..."
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-        />
+        <div className="s-box" style={{ maxWidth: 280 }}>
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            style={{ color: "var(--text-muted)", flexShrink: 0 }}
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search customer..."
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+        </div>
       </div>
 
       {ledgerSummary && (

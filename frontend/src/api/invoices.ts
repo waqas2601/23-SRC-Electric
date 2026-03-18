@@ -8,6 +8,8 @@ const headers = (token: string) => ({
 export async function getInvoicesAPI(
   token: string,
   params?: {
+    q?: string;
+
     status?: string;
     customerId?: string;
     fromDate?: string;
@@ -17,6 +19,8 @@ export async function getInvoicesAPI(
   },
 ) {
   const query = new URLSearchParams();
+  if (params?.q) query.set("q", params.q);
+
   if (params?.status) query.set("status", params.status);
   if (params?.customerId) query.set("customerId", params.customerId);
   if (params?.fromDate) query.set("fromDate", params.fromDate);
