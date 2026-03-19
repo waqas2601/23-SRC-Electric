@@ -96,6 +96,7 @@ function InvoiceDetail() {
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
 
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [itemQuery, setItemQuery] = useState("");
   const [itemResults, setItemResults] = useState<Product[]>([]);
   const [itemLoading, setItemLoading] = useState(false);
@@ -135,32 +136,41 @@ function InvoiceDetail() {
     fetchInvoice();
   }, [fetchInvoice]);
 
+  // Load all products once on mount
   useEffect(() => {
-    if (!token) {
-      setItemResults([]);
-      return;
-    }
-
-    const q = itemQuery.trim();
-    const timeout = setTimeout(async () => {
+    if (!token) return;
+    const loadAll = async () => {
       setItemLoading(true);
       try {
-        const data = await getProductsAPI(token, {
-          q: q || undefined,
-          isActive: true,
-          limit: q ? 8 : 50,
-        });
-        const items = (data.items ?? []) as Product[];
-        setItemResults(q ? items : mixProductsByModel(items).slice(0, 20));
+        const all: Product[] = [];
+        let page = 1;
+        while (true) {
+          const data = await getProductsAPI(token, { page, limit: 100, isActive: true });
+          all.push(...(data.items ?? []));
+          if (all.length >= data.total || (data.items ?? []).length === 0) break;
+          page++;
+        }
+        setAllProducts(all);
+        setItemResults(mixProductsByModel(all).slice(0, 20));
       } catch {
+        setAllProducts([]);
         setItemResults([]);
       } finally {
         setItemLoading(false);
       }
-    }, 250);
+    };
+    void loadAll();
+  }, [token]);
 
-    return () => clearTimeout(timeout);
-  }, [itemQuery, token]);
+  // Filter client-side when query changes
+  useEffect(() => {
+    const q = itemQuery.trim().toLowerCase();
+    if (!q) {
+      setItemResults(mixProductsByModel(allProducts).slice(0, 20));
+    } else {
+      setItemResults(allProducts.filter((p) => p.name.toLowerCase().includes(q)));
+    }
+  }, [itemQuery, allProducts]);
 
   const totals = useMemo(() => {
     if (!invoice) {
@@ -246,12 +256,10 @@ function InvoiceDetail() {
     setDraftBoxQty("");
     // Model dropdown logic
     if (product.type === "model") {
-      // Find all models for this product name
-      const models = itemResults
+      const models = allProducts
         .filter((p) => p.name === product.name && p.model)
         .map((p) => p.model);
       setSelectedModel(null);
-      // Optionally: auto-select if only one model
       if (models.length === 1) setSelectedModel(models[0]?.label ?? null);
     } else {
       setSelectedModel(product.model?.label ?? null);
@@ -261,7 +269,7 @@ function InvoiceDetail() {
   const handleAppendItem = async () => {
     if (!token || !invoice || !selectedProduct || appendLoading) return;
 
-    const variants = itemResults.filter((p) => p.name === selectedProduct.name);
+    const variants = allProducts.filter((p) => p.name === selectedProduct.name);
     if (variants.length > 1 && !selectedModel) {
       showToast("error", "Please select a model first");
       return;
@@ -761,7 +769,7 @@ function InvoiceDetail() {
                   selectedProduct.type === "model" &&
                   (() => {
                     const modelPrices: { [model: string]: number } = {};
-                    itemResults.forEach((item) => {
+                    allProducts.forEach((item) => {
                       const label = item.model?.label;
                       if (item.name === selectedProduct.name && label && typeof item.price === "number") {
                         modelPrices[label] = item.price;
@@ -783,7 +791,7 @@ function InvoiceDetail() {
                           onChange={(e) => {
                             const m = e.target.value;
                             setSelectedModel(m);
-                            const matched = itemResults.find(
+                            const matched = allProducts.find(
                               (p) =>
                                 p.name === selectedProduct.name &&
                                 p.model?.label === m,
