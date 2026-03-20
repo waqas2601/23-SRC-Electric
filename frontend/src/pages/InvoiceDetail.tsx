@@ -34,6 +34,8 @@ interface InvoiceDetailData {
     _id?: string;
     product_name_snapshot: string;
     sku_snapshot?: string;
+    model_snapshot?: string;
+    type_snapshot?: "direct" | "model";
     quantity: number;
     box_qty?: number;
     unit_price_snapshot: number;
@@ -83,6 +85,10 @@ function mixProductsByModel(items: Product[]) {
   }
 
   return mixed;
+}
+
+function itemType(item: InvoiceDetailData["items"][number]): "model" | "direct" {
+  return item.type_snapshot ?? (item.model_snapshot ? "model" : "direct");
 }
 
 function InvoiceDetail() {
@@ -151,7 +157,7 @@ function InvoiceDetail() {
           page++;
         }
         setAllProducts(all);
-        setItemResults(mixProductsByModel(all).slice(0, 20));
+        setItemResults(all.filter((p) => p.type === "direct").slice(0, 20));
       } catch {
         setAllProducts([]);
         setItemResults([]);
@@ -162,13 +168,14 @@ function InvoiceDetail() {
     void loadAll();
   }, [token]);
 
-  // Filter client-side when query changes
+  // Filter client-side when query changes — append only allows direct products
   useEffect(() => {
+    const directProducts = allProducts.filter((p) => p.type === "direct");
     const q = itemQuery.trim().toLowerCase();
     if (!q) {
-      setItemResults(mixProductsByModel(allProducts).slice(0, 20));
+      setItemResults(directProducts.slice(0, 20));
     } else {
-      setItemResults(allProducts.filter((p) => p.name.toLowerCase().includes(q)));
+      setItemResults(directProducts.filter((p) => p.name.toLowerCase().includes(q)));
     }
   }, [itemQuery, allProducts]);
 
@@ -192,6 +199,13 @@ function InvoiceDetail() {
     setDiscountValue(invoice.discount ?? 0);
     setDiscountInput("");
     setShowDiscountEditor(false);
+  }, [invoice]);
+
+  const modelSubtotal = useMemo(() => {
+    if (!invoice) return 0;
+    return (invoice.items ?? [])
+      .filter((i) => itemType(i) === "model")
+      .reduce((s, i) => s + i.line_total, 0);
   }, [invoice]);
 
   const computedDiscount = useMemo(() => {
@@ -240,10 +254,12 @@ function InvoiceDetail() {
       items: (invoice.items ?? []).map((item) => ({
         productName: item.product_name_snapshot,
         sku: item.sku_snapshot,
+        modelLabel: item.model_snapshot,
         quantity: item.quantity ?? 0,
         boxQty: item.box_qty ?? null,
         unitPrice: item.unit_price_snapshot ?? 0,
         lineTotal: item.line_total ?? 0,
+        type: itemType(item),
       })),
     });
   };
@@ -269,11 +285,7 @@ function InvoiceDetail() {
   const handleAppendItem = async () => {
     if (!token || !invoice || !selectedProduct || appendLoading) return;
 
-    const variants = allProducts.filter((p) => p.name === selectedProduct.name);
-    if (variants.length > 1 && !selectedModel) {
-      showToast("error", "Please select a model first");
-      return;
-    }
+    // Direct products have no model variants — skip model check
 
     const parsed = draftBoxQty.trim();
     if (parsed !== "" && Number.isNaN(Number(parsed))) {
@@ -325,8 +337,8 @@ function InvoiceDetail() {
     }
 
     const discount = computedDiscount;
-    if (discount > (invoice.subtotal ?? 0)) {
-      showToast("error", "Discount cannot be greater than subtotal");
+    if (discount > modelSubtotal) {
+      showToast("error", "Discount cannot exceed model items total");
       return;
     }
 
@@ -674,60 +686,92 @@ function InvoiceDetail() {
             </button>
           </div>
 
-          <div
-            className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            LINE ITEMS
-          </div>
+          {(() => {
+            const modelItems = (invoice.items ?? []).filter((i) => itemType(i) === "model");
+            const directItems = (invoice.items ?? []).filter((i) => itemType(i) === "direct");
+            const modelSubtotal = modelItems.reduce((s, i) => s + i.line_total, 0);
+            const directSubtotal = directItems.reduce((s, i) => s + i.line_total, 0);
+            const modelNet = modelSubtotal - (invoice.discount ?? 0);
+            const hasBoth = modelItems.length > 0 && directItems.length > 0;
 
-          <div className="card p-0 overflow-hidden">
-            {invoice.items?.length ? (
-              // Show items in the order they are in the array (oldest first, newest last)
-              invoice.items.map((item, idx) => (
+            const renderItems = (items: typeof invoice.items) =>
+              items.map((item, idx) => (
                 <div
                   key={item._id || `${item.sku_snapshot}-${idx}`}
                   className="flex items-start justify-between gap-[10px] p-[14px]"
-                  style={{
-                    borderBottom:
-                      idx < invoice.items.length - 1
-                        ? "1px solid var(--border)"
-                        : "none",
-                  }}
+                  style={{ borderBottom: idx < items.length - 1 ? "1px solid var(--border)" : "none" }}
                 >
                   <div>
-                    <div
-                      className="font-inter font-semibold text-[15px] leading-[1.25]"
-                      style={{ color: "var(--text-primary)" }}
-                    >
+                    <div className="font-inter font-semibold text-[15px] leading-[1.25]" style={{ color: "var(--text-primary)" }}>
                       {item.product_name_snapshot}
                     </div>
-                    <div
-                      className="text-[12px] mt-[4px] font-medium"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      {item.quantity} × PKR{" "}
-                      {item.unit_price_snapshot.toLocaleString()} ·{" "}
-                      {item.box_qty ?? "—"} boxes
+                    <div className="text-[12px] mt-[4px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                      {item.quantity} × PKR {item.unit_price_snapshot.toLocaleString()} · {item.box_qty ?? "—"} boxes
                     </div>
                   </div>
-                  <div
-                    className="font-inter font-bold text-[16px] leading-[1.2]"
-                    style={{ color: "var(--text-primary)" }}
-                  >
+                  <div className="font-inter font-bold text-[16px] leading-[1.2]" style={{ color: "var(--text-primary)" }}>
                     PKR {item.line_total.toLocaleString()}
                   </div>
                 </div>
-              ))
-            ) : (
-              <div
-                className="text-center py-8"
-                style={{ color: "var(--text-muted)" }}
-              >
-                No items found
-              </div>
-            )}
-          </div>
+              ));
+
+            return (
+              <>
+                {modelItems.length > 0 && (
+                  <>
+                    <div className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]" style={{ color: "var(--text-secondary)" }}>
+                      MODEL PRODUCTS
+                    </div>
+                    <div className="card p-0 overflow-hidden">
+                      {renderItems(modelItems)}
+                      <div className="flex items-center justify-between p-[10px_14px]" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-input)" }}>
+                        <span className="text-[13px] font-medium" style={{ color: "var(--text-secondary)" }}>Model Subtotal</span>
+                        <span className="font-inter font-semibold text-[14px]" style={{ color: "var(--text-primary)" }}>PKR {modelSubtotal.toLocaleString()}</span>
+                      </div>
+                      {(invoice.discount ?? 0) > 0 && (
+                        <div className="flex items-center justify-between p-[6px_14px]">
+                          <span className="text-[13px] font-medium" style={{ color: "#ff4d6a" }}>Discount</span>
+                          <span className="font-inter font-semibold text-[13px]" style={{ color: "#ff4d6a" }}>− PKR {(invoice.discount ?? 0).toLocaleString()}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between p-[10px_14px]" style={{ borderTop: "1px solid var(--border)" }}>
+                        <span className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>Net (Model)</span>
+                        <span className="font-inter font-bold text-[15px]" style={{ color: "var(--text-primary)" }}>PKR {modelNet.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {directItems.length > 0 && (
+                  <>
+                    <div className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]" style={{ color: "var(--text-secondary)" }}>
+                      DIRECT PRODUCTS
+                    </div>
+                    <div className="card p-0 overflow-hidden">
+                      {renderItems(directItems)}
+                      <div className="flex items-center justify-between p-[10px_14px]" style={{ borderTop: "1px solid var(--border)", background: "var(--bg-input)" }}>
+                        <span className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>Direct Total</span>
+                        <span className="font-inter font-bold text-[15px]" style={{ color: "var(--text-primary)" }}>PKR {directSubtotal.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {hasBoth && (
+                  <div className="card p-[14px] flex items-center justify-between">
+                    <span className="font-inter font-bold text-[17px]" style={{ color: "var(--text-primary)" }}>Grand Total</span>
+                    <span className="font-inter font-extrabold text-[22px]" style={{ color: "var(--text-primary)" }}>PKR {totals.total.toLocaleString()}</span>
+                  </div>
+                )}
+
+                {!(invoice.items?.length) && (
+                  <div className="card p-0 overflow-hidden">
+                    <div className="text-center py-8" style={{ color: "var(--text-muted)" }}>No items found</div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           <div
             className="text-[11px] tracking-[1px] font-inter font-semibold mt-[2px]"
@@ -763,56 +807,6 @@ function InvoiceDetail() {
                       : "var(--border-input)",
                   }}
                 />
-
-                {/* Model selector — only when product has multiple models */}
-                {selectedProduct &&
-                  selectedProduct.type === "model" &&
-                  (() => {
-                    const modelPrices: { [model: string]: number } = {};
-                    allProducts.forEach((item) => {
-                      const label = item.model?.label;
-                      if (item.name === selectedProduct.name && label && typeof item.price === "number") {
-                        modelPrices[label] = item.price;
-                      }
-                    });
-                    const models = Object.keys(modelPrices);
-                    if (models.length === 0) return null;
-                    return (
-                      <div className="mt-3" style={{ maxWidth: "220px" }}>
-                        <label
-                          className="block text-[11px] uppercase tracking-[.08em] mb-2"
-                          style={{ color: "var(--text-secondary)" }}
-                        >
-                          Select Model
-                        </label>
-                        <select
-                          className="fi"
-                          value={selectedModel ?? ""}
-                          onChange={(e) => {
-                            const m = e.target.value;
-                            setSelectedModel(m);
-                            const matched = allProducts.find(
-                              (p) =>
-                                p.name === selectedProduct.name &&
-                                p.model?.label === m,
-                            );
-                            if (matched) setSelectedProduct(matched);
-                          }}
-                        >
-                          <option value="">Select model...</option>
-                          {models.map((m) => (
-                            <option
-                              key={selectedProduct?.name + "-" + m}
-                              value={m}
-                            >
-                              {m.replace(/_/g, " ")} — PKR{" "}
-                              {modelPrices[m]?.toLocaleString()}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    );
-                  })()}
 
                 {(itemQuery || selectedProduct) && (
                   <button

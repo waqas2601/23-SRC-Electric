@@ -1,10 +1,12 @@
 type InvoicePdfItem = {
   productName: string;
   sku?: string;
+  modelLabel?: string | null;
   quantity: number;
   boxQty?: number | null;
   unitPrice: number;
   lineTotal: number;
+  type?: "direct" | "model";
 };
 
 export type InvoicePdfData = {
@@ -83,36 +85,114 @@ function buildHtml(
   const date = data.invoiceDate ? formatDate(data.invoiceDate) : "";
   const discount = data.discount ?? 0;
   const paidAmount = data.paidAmount ?? 0;
-  const itemCount = data.items.length;
 
   const logoImg = (src: string | null, alt: string) =>
     src
       ? `<img src="${src}" alt="${alt}" class="logo-img" />`
       : `<div class="logo-placeholder">${alt}</div>`;
 
-  const itemRows = data.items
-    .map(
-      (item, i) => `
-      <tr class="${i % 2 === 1 ? "row-alt" : ""}">
-        <td class="center">${i + 1}</td>
+  // Split items by type — infer from type field, fall back to sku presence
+  const modelItems = data.items.filter((i) => (i.type ?? (i.sku ? "model" : "direct")) === "model");
+  const directItems = data.items.filter((i) => (i.type ?? (i.sku ? "model" : "direct")) === "direct");
+  const hasBoth = modelItems.length > 0 && directItems.length > 0;
+  const modelSubtotal = modelItems.reduce((s, i) => s + i.lineTotal, 0);
+  const directSubtotal = directItems.reduce((s, i) => s + i.lineTotal, 0);
+  const modelNet = modelSubtotal - discount;
+
+  const renderRows = (items: InvoicePdfItem[], startIdx: number) =>
+    items.map((item, i) => `
+      <tr class="${(startIdx + i) % 2 === 1 ? "row-alt" : ""}">
+        <td class="center">${startIdx + i + 1}</td>
         <td>${item.productName}</td>
-        <td>${modelDisplayName(item.sku)}</td>
+        <td>${item.type === "direct" ? "—" : (item.modelLabel ?? modelDisplayName(item.sku))}</td>
         <td class="center">${item.boxQty != null ? item.boxQty : "—"}</td>
         <td class="center">${item.quantity}</td>
         <td class="right">${formatMoney(item.unitPrice)}</td>
         <td class="right bold">${formatMoney(item.lineTotal)}</td>
-      </tr>`,
-    )
-    .join("");
+      </tr>`).join("");
 
-  const discountRow =
-    discount > 0
-      ? `<tr class="sum-row">
-          <td class="center">${itemCount + 2}</td>
+  // Single-section layout (no direct items — same as before)
+  const singleSectionTable = !hasBoth ? `
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width:34px">S.No</th>
+          <th>Item</th>
+          <th>Model</th>
+          <th class="center" style="width:54px">Box Qty</th>
+          <th class="center" style="width:44px">Qty</th>
+          <th class="right" style="width:108px">Unit Price</th>
+          <th class="right" style="width:108px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${renderRows(data.items, 0)}</tbody>
+      <tbody>
+        <tr><td colspan="7" style="padding:0;border:none;height:6px;"></td></tr>
+        <tr class="sum-row sum-row-divider">
+          <td class="center">${data.items.length + 1}</td>
+          <td colspan="5" class="sum-label-left">List Total</td>
+          <td class="right bold">${formatMoney(data.subtotal)}</td>
+        </tr>
+        ${discount > 0 ? `<tr class="sum-row">
+          <td class="center">${data.items.length + 2}</td>
           <td colspan="5" class="sum-label-left">Discount</td>
           <td class="right red bold">&minus; ${formatMoney(discount)}</td>
-        </tr>`
-      : "";
+        </tr>` : ""}
+      </tbody>
+    </table>
+  </div>` : "";
+
+  // Two-section layout (model items + direct items)
+  // directStartIdx: continues S.No after model items + subtotal + discount? + net rows
+  const directStartIdx = modelItems.length + 2 + (discount > 0 ? 1 : 0);
+  const directTotalRowNo = directStartIdx + directItems.length + 1;
+
+  const twoSectionTable = hasBoth ? `
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="center" style="width:34px">S.No</th>
+          <th>Item</th>
+          <th>Model</th>
+          <th class="center" style="width:54px">Box Qty</th>
+          <th class="center" style="width:44px">Qty</th>
+          <th class="right" style="width:108px">Unit Price</th>
+          <th class="right" style="width:108px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${renderRows(modelItems, 0)}
+        <tr><td colspan="7" style="padding:0;border:none;height:4px;"></td></tr>
+        <tr class="sum-row sum-row-divider">
+          <td class="center">${modelItems.length + 1}</td>
+          <td colspan="5" class="sum-label-left">Subtotal</td>
+          <td class="right bold">${formatMoney(modelSubtotal)}</td>
+        </tr>
+        ${discount > 0 ? `<tr class="sum-row">
+          <td class="center">${modelItems.length + 2}</td>
+          <td colspan="5" class="sum-label-left">Discount</td>
+          <td class="right red bold">&minus; ${formatMoney(discount)}</td>
+        </tr>` : ""}
+        <tr class="sum-row">
+          <td class="center">${modelItems.length + (discount > 0 ? 3 : 2)}</td>
+          <td colspan="5" class="sum-label-left" style="font-weight:700;color:#1a237e;">Net</td>
+          <td class="right bold" style="color:#1a237e;">${formatMoney(modelNet)}</td>
+        </tr>
+      </tbody>
+      <tbody>
+        <tr><td colspan="7" style="padding:0;border:none;height:10px;"></td></tr>
+        ${renderRows(directItems, directStartIdx)}
+        <tr><td colspan="7" style="padding:0;border:none;height:4px;"></td></tr>
+        <tr class="sum-row sum-row-divider">
+          <td class="center">${directTotalRowNo}</td>
+          <td colspan="5" class="sum-label-left" style="font-weight:700;color:#1a237e;">Direct Total</td>
+          <td class="right bold" style="color:#1a237e;">${formatMoney(directSubtotal)}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>` : "";
 
   const notesSection = data.notes?.trim()
     ? `<div class="notes-box"><span class="notes-label">Notes</span> ${data.notes.trim()}</div>`
@@ -364,37 +444,12 @@ function buildHtml(
   </div>
 
   <!-- Line items -->
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th class="center" style="width:34px">S.No</th>
-          <th>Item</th>
-          <th>Model</th>
-          <th class="center" style="width:54px">Box Qty</th>
-          <th class="center" style="width:44px">Qty</th>
-          <th class="right"  style="width:108px">Unit Price</th>
-          <th class="right"  style="width:108px">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${itemRows}
-      </tbody>
-      <tbody>
-        <tr><td colspan="7" style="padding:0; border:none; height:6px;"></td></tr>
-        <tr class="sum-row sum-row-divider">
-          <td class="center">${itemCount + 1}</td>
-          <td colspan="5" class="sum-label-left">List Total</td>
-          <td class="right bold">${formatMoney(data.subtotal)}</td>
-        </tr>
-        ${discountRow}
-      </tbody>
-    </table>
-  </div>
+  ${singleSectionTable}
+  ${twoSectionTable}
 
-  <!-- Net Total band -->
+  <!-- Total band -->
   <div class="total-band">
-    <span class="total-label">NET TOTAL</span>
+    <span class="total-label">${hasBoth ? "GRAND TOTAL" : "NET TOTAL"}</span>
     <span class="total-value">${formatMoney(data.total)}</span>
   </div>
 

@@ -145,9 +145,10 @@ function NewInvoice() {
   useEffect(() => {
     if (!showItemResults) { setItemResults([]); return; }
     const q = itemQuery.trim().toLowerCase();
+    const modelProducts = allProducts.filter((p) => p.type === "model");
     const filtered = q
-      ? allProducts.filter((p) => p.name.toLowerCase().includes(q))
-      : mixProductsByModel(allProducts).slice(0, 20);
+      ? modelProducts.filter((p) => p.name.toLowerCase().includes(q))
+      : mixProductsByModel(modelProducts).slice(0, 20);
     setItemResults(filtered);
   }, [itemQuery, allProducts, showItemResults]);
 

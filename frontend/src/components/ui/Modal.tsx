@@ -24,9 +24,10 @@ function Modal({
       onClick={onClose}
     >
       <div
-        className="w-full rounded-xl overflow-hidden"
+        className="w-full rounded-xl flex flex-col"
         style={{
           maxWidth: width,
+          maxHeight: "calc(100vh - 48px)",
           background: "var(--bg-card)",
           border: "1px solid var(--border)",
           boxShadow: "0 24px 64px rgba(0,0,0,0.4)",
@@ -34,9 +35,9 @@ function Modal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        {/* Header — always visible */}
         <div
-          className="flex items-center justify-between px-[20px] py-[16px]"
+          className="flex items-center justify-between px-[20px] py-[16px] flex-shrink-0"
           style={{ borderBottom: "1px solid var(--border)" }}
         >
           <div
@@ -59,8 +60,8 @@ function Modal({
           </button>
         </div>
 
-        {/* Content */}
-        <div>{children}</div>
+        {/* Content — scrollable */}
+        <div style={{ overflowY: "auto" }}>{children}</div>
       </div>
     </div>
   );
